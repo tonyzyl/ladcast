@@ -1,0 +1,11 @@
+This repository contains code under multiple licenses:
+
+1. Code modified from third-party sources (primarily in /ladcast/models/) is licensed under 
+the Apache License 2.0. See the headers in individual files for attribution.
+
+2. All other original content (including model weight) created by Yilin Zhuang
+are licensed under the MIT License.
+
+For the full text of the Apache License 2.0, see: https://www.apache.org/licenses/LICENSE-2.0
+
+For the full text of the MIT License, see: https://opensource.org/license/mit/

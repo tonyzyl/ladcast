@@ -1,0 +1,145 @@
+encdec:
+  in_channels: 89
+  out_channels: 89
+  latent_channels: 84
+  attention_head_dim: 32
+  encoder_block_types: 
+    - ResBlock
+    - ResBlock
+    - EfficientViTBlock
+    - EfficientViTBlock
+  decoder_block_types: 
+    - ResBlock
+    - ResBlock
+    - EfficientViTBlock
+    - EfficientViTBlock
+  encoder_block_out_channels:
+    - 252
+    - 504
+    - 504
+    - 1008
+  decoder_block_out_channels:
+    - 252
+    - 504
+    - 504
+    - 1008
+  encoder_layers_per_block: 
+    - 4
+    - 4
+    - 4
+    - 4
+  decoder_layers_per_block:
+    - 4
+    - 4
+    - 4
+    - 4
+  encoder_qkv_multiscales:
+    - []
+    - []
+    - [5]
+    - [5]
+  decoder_qkv_multiscales:
+    - []
+    - []
+    - [5]
+    - [5]
+  upsample_block_type: "pixel_shuffle"
+  downsample_block_type: "pixel_unshuffle"
+  static_channels: 5
+
+loss_fn:
+  target: metric.loss.LpLoss
+  params:
+    d: 2
+    p: 2
+    reduce_dims: 
+      - 0
+      - 1
+    reductions: mean
+  #target: metric.loss.MSELoss
+  #params:
+    #reduction: mean
+  
+loss_scale:
+  loss_fn_scale: 1.0
+  kl_scale: 1e-8
+
+optimizer:
+  betas:
+    - 0.9
+    - 0.999
+  eps: 1e-08
+  lr: 1e-4
+  weight_decay: 1e-2
+
+lr_scheduler:
+  name: cosine
+  num_warmup_steps: 1000
+  num_cycles: 0.5
+  power: 1.0
+
+train_dataloader:
+  num_workers: 8
+  batch_size: 4
+  prefetch_factor: 6
+  persistent_workers: True
+
+val_dataloader:
+  num_workers: 1
+  batch_size: 4
+  prefetch_factor: 6
+  persistent_workers: True
+
+test_dataloader:
+  batch_size: 1
+
+accelerator:
+  mixed_precision: bf16
+  gradient_accumulation_steps: 1
+  #log_with: wandb
+  log_with: tensorboard
+
+ema:
+  use_ema: True
+  offload_ema: False
+  ema_max_decay: 0.9999
+  ema_inv_gamma: 1.0
+  ema_power: 0.66667
+  ema_update_after_step: 1000
+  foreach: True
+
+general:
+  seed: 42
+  num_train_epochs: 30
+  #epoch_length: 500
+  epoch_length: 341875
+  subbatch_steps: 3
+  val_every_epochs: 2
+  num_training_steps: null
+  scale_lr: False
+  output_dir: your_output_dir
+  logging_dir: encdec
+  tracker_project_name: encdec_tracker
+  save_model_epochs: 20
+  checkpointing_steps: 40000
+  channel_names: [
+        'geopotential',                  
+        'specific_humidity',             
+        'temperature',                   
+        'u_component_of_wind',           
+        'v_component_of_wind',  
+        'vertical_velocity',  
+        '10m_u_component_of_wind',       
+        '10m_v_component_of_wind',       
+        '2m_temperature',                
+        'mean_sea_level_pressure',       
+        'sea_surface_temperature',
+        'total_precipitation_6hr',
+            ]
+  static_names: [
+        'land_sea_mask',
+        'standard_deviation_of_orography',
+        'angle_of_sub_gridscale_orography', 
+        'anisotropy_of_sub_gridscale_orography', 
+        'slope_of_sub_gridscale_orography'
+  ]

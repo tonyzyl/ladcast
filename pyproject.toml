@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ladcast"
+version = "0.1.0"
+description = "LaDcast: Latent Diffusion for Ensemble Weather Forecasting"
+authors = [
+    { name = "Yilin Zhuang", email = "ylzhuang@umich.edu.com" }
+]
+readme = "README.md"
+requires-python = ">= 3.11"
+license = { file = "LICENSE" }
+keywords = [
+    'artificial intelligence',
+    'weather forecasting',
+    'deep learning',
+    'diffusion models'
+]
+classifiers = [
+    'Development Status :: 4 - Beta',
+    'Intended Audience :: Developers',
+    'Intended Audience :: Science/Research',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'Topic :: Scientific/Engineering :: Atmospheric Science',
+    'Programming Language :: Python :: 3.11',
+]
+
+dependencies = [
+    'torch==2.4.1',
+    'torchvision',
+    'accelerate==1.6.0',
+    'diffusers[torch]==0.32.1',
+    'transformers',
+    'datasets',
+    'dask',
+    'zarr',
+    'netCDF4',
+    'xarray',
+    'gcsfs',
+    'tensorboard',
+    'einops',
+    'h5netcdf',
+    'h5py',
+    'scipy',
+    'pandas',
+    'matplotlib',
+    'cartopy',
+    'omegaconf',
+    'typer',
+    'tqdm',
+    'wandb',
+    'ipykernel',
+    'notebook',
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ladcast*"]
+exclude = ["assets*", "tests*", ".*"]

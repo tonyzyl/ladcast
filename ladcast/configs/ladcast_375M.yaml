@@ -1,0 +1,116 @@
+ar_model:
+  _class_name: LaDCastTransformer3DModel
+  in_channels: 84
+  out_channels: 84
+  num_attention_heads: 12
+  attention_head_dim: 128
+  num_layers: 2
+  num_single_layers: 4
+  num_refiner_layers: 1
+  mlp_ratio: 4
+  patch_size: 1
+  patch_size_t: 1
+  qk_norm: rms_norm
+  rope_theta: 256.0
+  rope_axes_dim:
+    - 16
+    - 56
+    - 56
+  rope_spatial_grid_start_pos:
+    - -499.5
+    - 5.25
+  rope_spatial_grid_end_pos:
+    - 508.5
+    - 353.25
+  spatial_deg2rad: True
+  conditioning_tensor_in_channels: 84
+  conditioning_tensor_rope_axes_dim:
+    - 16
+    - 56
+    - 56
+  incl_time_elapsed: True
+
+noise_scheduler:
+  target: diffusers.EDMDPMSolverMultistepScheduler
+  params:
+    num_train_timesteps: 1000
+
+noise_sampler:
+  P_mean_start: -1.2
+  P_std_start: 1.2
+  P_mean_end: -1.2
+  P_std_end: 1.2
+
+optimizer:
+  betas:
+    - 0.9
+    - 0.999
+  eps: 1e-08
+  lr: 1e-4
+  weight_decay: 1e-2
+
+lr_scheduler:
+  name: cosine
+  num_warmup_steps: 1000
+  num_cycles: 0.5
+  power: 1.0
+
+train_dataloader:
+  ds_path: your_compressed_path.zarr
+  batch_size: 4
+  num_workers: 16
+  start_date: 1979-01-01T05
+  end_date: 2017-12-31
+  transform: normalize
+  input_seq_len: 1
+  return_seq_len: 4
+  sampling_interval: 1
+  interval_between_pred: 6
+  shuffle: True
+  load_in_memory: True
+  persistent_workers: True
+
+accelerator:
+  mixed_precision: bf16
+  gradient_accumulation_steps: 1
+  log_with: wandb
+  #log_with: tensorboard
+
+ema:
+  use_ema: True
+  offload_ema: False
+  ema_max_decay: 0.9999
+  ema_inv_gamma: 1.0
+  ema_power: 0.6666667
+  ema_update_after_step: 1000
+  foreach: True
+
+general:
+  seed: 42
+  num_training_steps: null
+  num_train_epochs: 10
+  scale_lr: False
+  output_dir: your_output_dir
+  logging_dir: ERA5
+  tracker_project_name: ERA5_tracker
+  save_image_epochs: 5
+  save_model_epochs: 1
+  checkpointing_steps: 50000
+  #checkpointing_steps: 1000
+  eval_batch_size: 1
+  do_edm_style_training: True
+  snr_gamma: null
+  channel_names: [
+        'geopotential',                  
+        'specific_humidity',             
+        'temperature',                   
+        'u_component_of_wind',           
+        'v_component_of_wind',  
+        'vertical_velocity',  
+        '10m_u_component_of_wind',       
+        '10m_v_component_of_wind',       
+        '2m_temperature',                
+        'mean_sea_level_pressure',       
+        'sea_surface_temperature',
+        'total_precipitation_6hr',
+            ]

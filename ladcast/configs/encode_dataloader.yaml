@@ -1,0 +1,30 @@
+full_dataloader:
+  ds_path: ERA5_path.zarr
+  batch_size: 1
+  num_workers: 4
+  start_date: 1979-01-01T05
+  #end_date: 1979-01-01T08
+  end_date: 2023-01-10T23
+  #end_date: 2022-12-31
+  input_dims_dict:
+    time: 1
+    latitude: 121
+    longitude: 240
+  atmospheric_variables_name_list:
+    - geopotential
+    - specific_humidity
+    - temperature
+    - u_component_of_wind
+    - v_component_of_wind
+    - vertical_velocity
+  surface_variables_name_list:
+    - 10m_u_component_of_wind
+    - 10m_v_component_of_wind
+    - 2m_temperature
+    - mean_sea_level_pressure
+    - sea_surface_temperature
+    - total_precipitation_6hr
+  crop_south_pole: True
+  data_augmentation: False
+  shuffle: False
+  prefetch_factor: 4
