@@ -1,6 +1,20 @@
 # LaDCast: Latent Diffusion model for ensemble weather forecasting
 
-We introduce LaDCast, the first latent diffusion model for ensemble weather forecasting. It showcases the feasibility of using the latent approach for weather forecasting, which is an alternative approach to handling high resolution, mi=ulti-variable forecasting via the coarse model + super-resolution. Due to the size of the dataset and data I/O, we model on the 240x121 resolution, with 6 atmospheric variables (13 pressure levels) and 6 single variables. The model is trained on the hourly ERA5 dataset from 1979 to 2017.
+Demo: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1bP3pZ7clc0Ymcgwi2KrNlCXzBthLjHkl?usp=sharing); [![Model on HF](https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-sm.svg)](https://huggingface.co/tonyzyl/ladcast/tree/main/V0.1.X/DCAE)
+
+We introduce LaDCast, the first latent diffusion model for ensemble weather forecasting. It showcases the feasibility of using the latent approach for weather forecasting, which is an alternative approach to handling high resolution, multi-variable forecasting via the coarse model + super-resolution. Due to the size of the dataset and data I/O, we model on the 240x121 resolution, with 6 atmospheric variables: geopotential, specific humidity, u & v components of wind and vertical velocity (13 pressure levels) and 6 single variables: 10m u & v, 2m temperature, mean sea level pressure, sea surface temperature and 6-hour total precipitation (derived). The model is trained on the hourly ERA5 reanalysis dataset from 1979 to 2017.
+
+In the Colab demo, we show AE reconstruction, ensemble forecasting and cyclone tracking. No local data needed, please feel free to try it out!
+
+## Visualization
+
+![Typhoon Kong-rey](assets/typhoon_kong_rey_globe.png)
+
+![Kong-rey track](assets/kongrey.png)
+
+![2018 RMSE](assets/2018_rmse.png)
+
+## Install
 
 We recommend using the venv (py 3.11) and install via:
 
@@ -14,7 +28,7 @@ pip install -e .
 cd ladcast
 ```
 
-Or using [uv](https://github.com/astral-sh/uv) (make sure you added the uv to your PATH):
+Or using [uv](https://github.com/astral-sh/uv) (make sure you add the uv to your PATH):
 
 ```bash
 git clone https://github.com/tonyzyl/ladcast.git
@@ -103,11 +117,12 @@ Example evaluation (10 samples per month, the default evalution requires the tar
 
 ```bash
 OUTPUT_NAME="YOUR_OUTPUT_PATH"
+AR_MODEL_PATH="YOUR_AR_MODEL_PATH"
 
 accelerate launch --config_file=configs/tmp_slurm_accelerate_config.yaml evaluate/pred_rollout.py \
   --data_path=ERA5_path.zarr \
   --encdec_model=V0.1.X/DCAE \
-  --ar_model_path=log/ERA5_transAR_1to4_1212_lat_circu_lw_375M/ar_model \
+  --ar_model_path=$AR_MODEL_PATH \
   --start_date=2018-01-01T00:00:00 \
   --end_date=2018-12-31T12:00:00 \
   --ensemble_size=20 \
@@ -128,7 +143,7 @@ accelerate launch --config_file=configs/tmp_slurm_accelerate_config.yaml evaluat
   --noise_level=0 \
   --output=$OUTPUT_NAME
 
-accelerate launch --config_file=configs/slurm_accelerate_nocompile_config.yaml evaluate_script/evaluate_ens_gpu.py \
+accelerate launch --config_file=configs/slurm_accelerate_nocompile_config.yaml evaluate/evaluate_ens_gpu.py \
   --data_path=ERA5_path.zarr \
   --climatology_path=climatology.zarr \
   --result_path=$OUTPUT_NAME \
@@ -137,10 +152,10 @@ accelerate launch --config_file=configs/slurm_accelerate_nocompile_config.yaml e
   --end_date=2019-01-16T00:00:00 \
   --total_lead_time_hour=240 \
   --step_size_hour=6 \
-  --normalization_json=ERA5_normal_1979_2017.json \
+  --normalization_json=static/ERA5_normal_1979_2017.json \
   --load_ds_in_memory \
   --crop_init \
-  --output=tmp/2018_375M_1to4_noise_0.03_ens20_step20/
+  --output=tmp/2018_375M_1to4_noise_0_ens20_step20/
 ```
 
 ## Hurricane tracking
@@ -177,3 +192,7 @@ python track.py 2018271N06154 \
 ```
 
 Note you need to provide the compressed latent file (npy files generated in pred_rollout). For 15-day, 50 trajectories, 6-hour interval forecast, the latent file is about 500MB. The ifs-ens file can be lazy loaded from WB2.
+
+## Acknowledgements
+
+This work was supported by Los Alamos National Laboratory under the project “Algorithm/Software/Hardware Co-design for High Energy Density applications” at the University of Michigan. We also thank the C3S and WeatherBench2 teams for making the data publicly available.
