@@ -2,9 +2,19 @@
 
 Demo: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1bP3pZ7clc0Ymcgwi2KrNlCXzBthLjHkl?usp=sharing); [![Model on HF](https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-sm.svg)](https://huggingface.co/tonyzyl/ladcast/tree/main/V0.1.X/DCAE)
 
-We introduce LaDCast, the first latent diffusion model for ensemble weather forecasting. It showcases the feasibility of using the latent approach for weather forecasting, which is an alternative approach to handling high resolution, multi-variable forecasting via the coarse model + super-resolution. Due to the size of the dataset and data I/O, we model on the 240x121 resolution, with 6 atmospheric variables: geopotential, specific humidity, u & v components of wind and vertical velocity (13 pressure levels) and 6 single variables: 10m u & v, 2m temperature, mean sea level pressure, sea surface temperature and 6-hour total precipitation (derived). The model is trained on the hourly ERA5 reanalysis dataset from 1979 to 2017.
+We introduce LaDCast, the first latent diffusion model for ensemble weather forecasting. It showcases the feasibility of using the latent approach for weather forecasting, which is an alternative approach to handling high resolution, multi-variable forecasting via the coarse model + super-resolution. Due to the size of the dataset and data I/O, we model on the 240x121 resolution, with 6 atmospheric variables: geopotential, specific humidity, u & v components of wind and vertical velocity (13 pressure levels) and 6 single variables: 10m u & v, 2m temperature, mean sea level pressure, sea surface temperature and 6-hour total precipitation (derived). The model is trained on the hourly ERA5 reanalysis dataset from 1979 to 2017. Arxiv: [LaDCast: Latent Diffusion Model for Ensemble Weather Forecasting](https://arxiv.org/abs/2506.09193)
 
 In the Colab demo, we show AE reconstruction, ensemble forecasting and cyclone tracking. No local data needed, please feel free to try it out!
+
+> [!NOTE]
+> The code is still in development, changes are expected. The first release, V0.1.0, is the model used in the paper. The first decimal place indicates new model changes/trained.
+
+Future work:
+
+- Retaining high-frequency information.
+- Improve the AR model's architecture.
+- Scale to higher resolution.
+- Test out flow-matching.
 
 ## Visualization
 
@@ -40,15 +50,6 @@ cd ladcast
 ```
 
 For executing following codes, `cd ladcast` first.
-
-**Note**: The code is still in development, changes are expected. The first release, V0.1.0, is the model used in the paper. The first decimal place indicates new model changes/trained.
-
-Future work:
-
-- Retaining high-frequency information.
-- Improve the AR model's architecture.
-- Scale to higher resolution.
-- Test out flow-matching.
 
 ## Download & preprocess the data
 
@@ -160,7 +161,7 @@ accelerate launch --config_file=configs/slurm_accelerate_nocompile_config.yaml e
 
 ## Hurricane tracking
 
-Download the `ibtracs_all_list_v04r01.csv` some examples are given as annotations in the `evluate_script/track.py`, for example:
+Download the `ibtracs_all_list_v04r01.csv` (or request online), some examples are given as annotations in the `evluate/track.py`, or refer to the colab demo. Example:
 
 ```bash
 # Typhoon Kong-rey, figsize (9, 11)
