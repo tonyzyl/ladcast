@@ -16,6 +16,10 @@ Future work:
 - Scale to higher resolution.
 - Test out flow-matching.
 
+Update log:
+
+**2026-03-04**: We provided new DCAE training method with [Ray](https://github.com/ray-project/ray) as backend, it now supports efficient lazy loading, random access training compared to the previous HF's webdataset format. New training script is `train_new_encdec.py` with new example config `configs/DC_AE_ray_1024.yaml`. The new uv env file is `.pyproject_ray.toml`.
+
 ## Visualization
 
 ![Typhoon Kong-rey](assets/typhoon_kong_rey_globe.png)

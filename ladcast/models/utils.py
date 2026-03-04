@@ -1,6 +1,9 @@
-from typing import Tuple, Union
-
+import math
 import torch
+from torch.optim.lr_scheduler import LambdaLR
+from diffusers.optimization import SchedulerType, get_scheduler
+
+from typing import Tuple, Union
 
 
 class Karras_sigmas_lognormal:
@@ -47,40 +50,104 @@ class Karras_sigmas_lognormal:
         return indices
 
 
-def apply_batch_rotary_emb(
-    x: torch.Tensor,
-    freqs_cis: Union[torch.Tensor, Tuple[torch.Tensor]],
-    use_real: bool = True,
-    use_real_unbind_dim: int = -1,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+def get_scheduler_with_min_lr(
+    name: str,
+    optimizer: torch.optim.Optimizer,
+    base_lr: float,
+    min_lr: float,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    num_cycles: int = 1,
+    power: float = 1.0,
+    last_epoch: int = -1,
+) -> LambdaLR:
     """
-    Modified diffusers.models.embeddings.apply_rotary_emb
+    Wrapper around diffusers get_scheduler that enforces a minimum learning rate.
+    
     Args:
-        freqs_cis: Tuple of two tensors, each of shape [B, S, D]
+        base_lr: The starting learning rate (must match optimizer's initial lr).
+        min_lr: The target minimum learning rate.
     """
-    if use_real:
-        cos, sin = freqs_cis  # [B, S, D]
-        cos = cos.unsqueeze(1)  # prev: cos = cos[None, None]
-        sin = sin.unsqueeze(1)
-        cos, sin = cos.to(x.device), sin.to(x.device)
+    min_lr_ratio = min_lr / base_lr
+    if name == "polynomial":
+        from diffusers.optimization import get_polynomial_decay_schedule_with_warmup
+        return get_polynomial_decay_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps,
+            lr_end=min_lr,  # Native support
+            power=power,
+            last_epoch=last_epoch
+        )
 
-        if use_real_unbind_dim == -1:
-            # Used for flux, cogvideox, hunyuan-dit
-            x_real, x_imag = x.reshape(*x.shape[:-1], -1, 2).unbind(
-                -1
-            )  # [B, S, H, D//2]
-            x_rotated = torch.stack([-x_imag, x_real], dim=-1).flatten(3)
-        elif use_real_unbind_dim == -2:
-            # Used for Stable Audio
-            x_real, x_imag = x.reshape(*x.shape[:-1], 2, -1).unbind(
-                -2
-            )  # [B, S, H, D//2]
-            x_rotated = torch.cat([-x_imag, x_real], dim=-1)
-        else:
-            raise ValueError(f"Invalid use_real_unbind_dim: {use_real_unbind_dim}")
+    if name == "cosine":
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            if current_step > num_training_steps:
+                return min_lr_ratio
 
-        out = (x.float() * cos + x_rotated.float() * sin).to(x.dtype)
+            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress)) # Standard 1->0
+            
+            return min_lr_ratio + (1.0 - min_lr_ratio) * cosine_decay
 
-        return out
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+    if name == "cosine_with_restarts":
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            if current_step > num_training_steps:
+                return min_lr_ratio
+
+            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            
+            if progress >= 1.0:
+                return min_lr_ratio
+            
+            return min_lr_ratio + (1.0 - min_lr_ratio) * (
+                0.5 * (1.0 + math.cos(math.pi * ((float(num_cycles) * progress) % 1.0)))
+            )
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+    # 4. Fallback for others (Constant, etc. don't need min_lr usually)
+    return get_scheduler(
+        name,
+        optimizer=optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
+        num_cycles=num_cycles,
+        power=power,
+    )
+
+
+def torch_gather(tensor, dim=0, stack=False):
+    """
+    Gathers a tensor from all distributed workers.
+    
+    Args:
+        tensor: The tensor to gather.
+        dim (int): Dimension to concatenate on if stack=False.
+        stack (bool): If True, stacks results on new dim 0 (shape: [World, ...]).
+                      If False, concatenates on dim 0 (shape: [World * Dim0, ...]).
+    """
+    # 1. Handle non-distributed case (e.g. debugging locally)
+    if not torch.distributed.is_initialized():
+        return tensor.unsqueeze(0) if stack else tensor
+    
+    # 2. Prepare list for all-gather
+    world_size = torch.distributed.get_world_size()
+    # We must ensure the tensor is contiguous for all_gather
+    tensor = tensor.contiguous() 
+    gathered_list = [torch.zeros_like(tensor) for _ in range(world_size)]
+    
+    # 3. Collect (Synchronization Point - All workers must call this)
+    torch.distributed.all_gather(gathered_list, tensor)
+    
+    # 4. Combine
+    if stack:
+        return torch.stack(gathered_list, dim=0)
     else:
-        raise NotImplementedError
+        return torch.cat(gathered_list, dim=dim)

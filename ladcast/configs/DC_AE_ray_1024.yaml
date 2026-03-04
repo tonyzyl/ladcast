@@ -1,0 +1,142 @@
+encdec:
+  in_channels: 90
+  out_channels: 90
+  latent_channels: 1024
+  attention_head_dim: 32
+  encoder_block_types: 
+    - ResBlock
+    - ResBlock
+    - EfficientViTBlock
+    - EfficientViTBlock
+  decoder_block_types: 
+    - ResBlock
+    - ResBlock
+    - EfficientViTBlock
+    - EfficientViTBlock
+  encoder_block_out_channels:
+    - 512
+    - 1024
+    - 1024
+    - 2048
+  decoder_block_out_channels:
+    - 512
+    - 1024
+    - 1024
+    - 2048
+  encoder_layers_per_block: 
+    - 4
+    - 4
+    - 4
+    - 4
+  decoder_layers_per_block:
+    - 4
+    - 4
+    - 4
+    - 4
+  encoder_qkv_multiscales:
+    - []
+    - []
+    - [5]
+    - [5]
+  decoder_qkv_multiscales:
+    - []
+    - []
+    - [5]
+    - [5]
+  upsample_block_type: "pixel_shuffle"
+  downsample_block_type: "pixel_unshuffle"
+  static_channels: 6
+
+loss_fn:
+  target: metric.loss.LpLoss
+  params:
+    d: 2
+    p: 2
+    reduce_dims: 
+      - 0
+      - 1
+    reductions: mean
+  #target: metric.loss.MSELoss
+  #params:
+    #reduction: mean
+  
+loss_scale:
+  loss_fn_scale: 1.0
+  kl_scale: 1e-8
+
+optimizer:
+  betas:
+    - 0.9
+    - 0.999
+  eps: 1e-08
+  lr: 1e-5
+  weight_decay: 1e-2
+
+lr_scheduler:
+  name: cosine
+  num_warmup_steps: 1000
+  num_cycles: 0.5
+  power: 1.0
+
+data:
+  zarr_path: PATH_TO_1HR_ERA5_ZARR
+  norm_json_path: ladcast/static/ERA5_normal_1979_2018.json
+  atmospheric_vars: [
+    "geopotential",
+    "specific_humidity",
+    "temperature",
+    "u_component_of_wind",
+    "v_component_of_wind",
+    "vertical_velocity",
+  ]
+  surface_vars: [
+    "10m_u_component_of_wind",
+    "10m_v_component_of_wind",
+    "2m_temperature",
+    "mean_sea_level_pressure",
+    "sea_surface_temperature",
+    "total_precipitation_6hr",
+  ]
+  static_names: [
+        'land_sea_mask',
+        'standard_deviation_of_orography',
+        'angle_of_sub_gridscale_orography', 
+        'anisotropy_of_sub_gridscale_orography', 
+        'slope_of_sub_gridscale_orography',
+        'geopotential_at_surface'
+  ]
+
+train:
+  mixed_precision: bf16
+  num_gpus: 2
+  train_start: 1979
+  train_end: 1979-02
+  val_start: 2019-03
+  val_end: 2019-04
+  seed: 42
+  num_train_epochs: 1
+  actor_pool_size: 16
+  map_batches_num_cpus: 1
+  map_batches_batch_size: 32
+  batch_size: 1
+  val_every_epochs: 1
+  save_every_epochs: 1
+  prefetch_batches: 2
+
+ema:
+  use_ema: True
+  offload_ema: True
+  ema_max_decay: 0.9999
+  ema_inv_gamma: 1.0
+  ema_power: 0.66667
+  ema_update_after_step: 1000
+  foreach: True
+
+general:
+  ray_object_store_memory: 16 # in GB
+  lat_weighted_loss: False
+  scale_lr: False
+  output_dir: YOUR_OUTPUT_DIR
+  logging_dir: encdec
+  tracker_project_name: encdec_tracker
+

@@ -1,11 +1,83 @@
 import calendar
 import re
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
 import xarray as xr
+
+
+def get_static_conditioning_tensor(
+    zarr: Union[str, xr.Dataset],
+    static_names: List[str],
+    crop_south_pole: bool = True,
+    normalize: bool = False,
+    normalize_eps: float = 1e-15,
+) -> torch.FloatTensor:
+    """
+    Loads static variables from the Zarr dataset and returns a conditioning tensor.
+    The tensor shape is (1, num_static_vars, lat, lon).
+    """
+    if isinstance(zarr, str):
+        ds = xr.open_dataset(zarr, engine="zarr", chunks={})
+    else:
+        ds = zarr
+    
+    static_vars = []
+    for var_name in static_names:
+        if var_name in ds:
+            static_var_data = ds[var_name]
+            static_vars.append(static_var_data)
+        else:
+            raise ValueError(f"Static variable '{var_name}' not found in dataset.")
+    
+    static_concat = xr.concat(static_vars, dim="channel").transpose("channel", "latitude", "longitude")
+    static_tensor = torch.from_numpy(static_concat.values.astype(np.float32)).unsqueeze(0)  # Add batch dim
+
+    if normalize:
+        static_mean = static_tensor.mean(dim=[2, 3], keepdim=True)
+        static_std = static_tensor.std(dim=[2, 3], keepdim=True)
+        static_tensor = (static_tensor - static_mean) / (static_std + normalize_eps)
+
+    if crop_south_pole:
+        static_tensor = static_tensor[:, :, 1:, :] # H: lat starts from -90
+    
+    return static_tensor
+
+    
+def extract_raw_data_from_zarr(
+    ds_slice: xr.Dataset, 
+    surface_vars: list, 
+    atmospheric_vars: list
+) -> np.ndarray:
+    """
+    Core logic to extract and stack variables from an Xarray time-slice 
+    into a (B, C, H, W) numpy array.
+    
+    Args:
+        ds_slice: Pre-selected xarray dataset (e.g. ds.sel(time=timestamps))
+        surface_vars: List of surface variable names
+        atmospheric_vars: List of atmospheric variable names
+        
+    Returns:
+        np.ndarray: Shape (Time, Channel, Lat, Lon), float32
+    """
+
+    surface_list = [ds_slice[var] for var in surface_vars]
+    batch_slice_surface = xr.concat(surface_list, dim="channel")
+    atmo_list = [ds_slice[var] for var in atmospheric_vars]
+    batch_slice_atmo = xr.concat(atmo_list, dim="tmp")
+    batch_slice_atmo = batch_slice_atmo.stack(channel=("tmp", "level"))
+    
+    if 'tmp' in batch_slice_atmo.coords:
+        batch_slice_atmo = batch_slice_atmo.drop_vars("tmp")
+
+    batch_slice_combined = xr.concat(
+        [batch_slice_atmo, batch_slice_surface], dim="channel",
+    ).transpose("time", "channel", "latitude", "longitude")
+
+    return batch_slice_combined.values.astype(np.float32)
 
 
 def periodic_rearrange(tensor: torch.Tensor, coords: torch.Tensor):
@@ -312,6 +384,7 @@ def xarr_to_tensor(
     var_name_to_normalize = [
         var_name for var_name in variable_names if var_name != "land_sea_mask"
     ]
+    # TODO: review lsm exclusion logic
     if normalization_param_dict is not None:
         mean_tensor, std_tensor = precompute_mean_std(
             normalization_param_dict, var_name_to_normalize
