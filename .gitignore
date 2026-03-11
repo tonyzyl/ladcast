@@ -10,3 +10,6 @@ wheels/
 .ladcast_venv
 
 wandb/
+
+data/
+data/
