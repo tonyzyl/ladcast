@@ -40,6 +40,12 @@ from ladcast.evaluate.utils import get_crps, get_normalized_lat_weights_based_on
 from ladcast.models.DCAE import AutoencoderDC
 from ladcast.models.embeddings import convert_int_to_datetime
 from ladcast.models.LaDCast_3D_model import LaDCastTransformer3DModel
+from ladcast.models.symmetry import (
+    SymmetryConfig,
+    apply_lon_roll_5d,
+    invert_lon_roll_5d,
+    sample_lon_roll_shifts,
+)
 from ladcast.models.utils import Karras_sigmas_lognormal
 from ladcast.pipelines.pipeline_AR import AutoRegressive2DPipeline
 from ladcast.pipelines.utils import ensemble_AR_sampler, get_sigmas
@@ -863,6 +869,7 @@ def main(args):
             accelerator.device
         )  # (lat,)
         loss_lat_weight = loss_lat_weight.view(1, 1, 1, -1, 1)  # (1, 1, 1, lat, 1)
+    symmetry_cfg = SymmetryConfig(**dict(getattr(general_config, "symmetry", {})))
     for epoch in range(first_epoch, general_config.num_train_epochs):
         ar_model.train()
         train_loss = 0.0
@@ -909,6 +916,7 @@ def main(args):
                     )
 
                 noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
+                x_in = noisy_images
 
                 if general_config.do_edm_style_training:
                     # sigmas: from high to low, default: 80 -> 0.002
@@ -922,6 +930,24 @@ def main(args):
                     x_in = noise_scheduler.precondition_inputs(
                         noisy_images, sigmas
                     )  # scale_model_input designed for step
+                initial_profile_for_model = initial_profile
+                noisy_images_for_model = noisy_images
+                x_in_for_model = x_in
+                applied_shifts = None
+                if symmetry_cfg.enabled and symmetry_cfg.group == "lon_roll":
+                    if torch.rand(1, device=clean_images.device).item() < symmetry_cfg.prob:
+                        applied_shifts = sample_lon_roll_shifts(
+                            bs,
+                            symmetry_cfg.max_shift,
+                            device=clean_images.device,
+                        )
+                        initial_profile_for_model = apply_lon_roll_5d(initial_profile, applied_shifts)
+                        noisy_images_for_model = apply_lon_roll_5d(noisy_images, applied_shifts)
+                        x_in_for_model = apply_lon_roll_5d(x_in, applied_shifts)
+                        accelerator.log(
+                            {"symmetry/mean_lon_shift": applied_shifts.float().mean()},
+                            step=global_step,
+                        )
 
                 model_pred = torch.fill(torch.empty_like(clean_images), float("nan"))
                 for push_forward_step in range(args.num_push_forward_steps):
@@ -929,7 +955,7 @@ def main(args):
                     end_idx = (
                         push_forward_step + 1
                     ) * num_slice_per_push_forward  # excluded
-                    tmp_x_in = x_in[:, :, start_idx:end_idx]
+                    tmp_x_in = x_in_for_model[:, :, start_idx:end_idx]
                     if push_forward_step >= 1:
                         # update, timestamps & initial_profile
                         for i in range(bs):
@@ -939,8 +965,8 @@ def main(args):
                             )
                         if general_config.do_edm_style_training:
                             if "EDM" in noise_scheduler_config.target:
-                                initial_profile = noise_scheduler.precondition_outputs(
-                                    noisy_images[
+                                initial_profile_for_model = noise_scheduler.precondition_outputs(
+                                    noisy_images_for_model[
                                         :,
                                         :,
                                         start_idx
@@ -958,7 +984,7 @@ def main(args):
                     model_pred[:, :, start_idx:end_idx] = ar_model(
                         tmp_x_in,
                         timesteps,
-                        initial_profile,
+                        initial_profile_for_model,
                         time_elapsed=timestamps,
                         return_dict=False,
                     )[0]
@@ -970,18 +996,18 @@ def main(args):
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     if "EDM" in noise_scheduler_config.target:
                         model_pred = noise_scheduler.precondition_outputs(
-                            noisy_images, model_pred, sigmas
+                            noisy_images_for_model, model_pred, sigmas
                         )  # the last (or more) channel is the mask
                         weighting = (sigmas**2 + 0.5**2) / (
                             sigmas * 0.5
                         ) ** 2  # assume sigma_data=0.5 for now
                     else:
                         if noise_scheduler.config.prediction_type == "epsilon":
-                            model_pred = model_pred * (-sigmas) + noisy_images
+                            model_pred = model_pred * (-sigmas) + noisy_images_for_model
                         elif noise_scheduler.config.prediction_type == "v_prediction":
                             model_pred = model_pred * (
                                 -sigmas / (sigmas**2 + 1) ** 0.5
-                            ) + (noisy_images / (sigmas**2 + 1))
+                            ) + (noisy_images_for_model / (sigmas**2 + 1))
                     # (comment from diffuser) We are not doing weighting here because it tends result in numerical problems.
                     # See: https://github.com/huggingface/diffusers/pull/7126#issuecomment-1968523051
                     # There might be other alternatives for weighting as well:
@@ -992,6 +1018,8 @@ def main(args):
                     # loss = (weighting.float() * ((clean_images.float() - model_output.float()) ** 2)).mean()
                     # loss = ((clean_images.float() - model_output.float()) ** 2).mean()
                     # loss = loss_fn(model_output, clean_images, sigmas)
+                if applied_shifts is not None:
+                    model_pred = invert_lon_roll_5d(model_pred, applied_shifts)
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
