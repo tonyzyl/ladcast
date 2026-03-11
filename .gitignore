@@ -12,4 +12,4 @@ wheels/
 wandb/
 
 data/
-data/
+ladcast/configs
