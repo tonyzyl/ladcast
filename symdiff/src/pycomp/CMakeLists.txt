@@ -1,0 +1,48 @@
+
+INCLUDE_DIRECTORIES (
+  ../engine
+)
+
+SET (PYTHON_SRCS
+  PythonSymdiffCommands.cc
+)
+
+#SET(PYVERSION symdiff_py2)
+
+FUNCTION(build_python_version arg1)
+ADD_LIBRARY (${arg1} SHARED ${PYTHON_SRCS})
+TARGET_LINK_LIBRARIES (${arg1} symdiff_dynamic)
+IF(WIN32)
+SET_TARGET_PROPERTIES(${arg1} PROPERTIES PREFIX "" SUFFIX ".pyd" OUTPUT_NAME "${arg1}")
+ELSE(WIN32)
+SET_TARGET_PROPERTIES(${arg1} PROPERTIES PREFIX "" SUFFIX ".so" OUTPUT_NAME "${arg1}")
+ENDIF(WIN32)
+
+ADD_CUSTOM_COMMAND(TARGET ${arg1}
+          POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E make_directory ${PROJECT_LIBRARY_DIR}/symdiff
+          COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${arg1}> ${PROJECT_LIBRARY_DIR}/symdiff
+)
+
+IF (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+SET_TARGET_PROPERTIES(${arg1} PROPERTIES INSTALL_RPATH "\$ORIGIN/")
+ENDIF (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+IF (APPLE)
+#SET_TARGET_PROPERTIES(${arg1} PROPERTIES INSTALL_RPATH "@loader_path/")
+SET_TARGET_PROPERTIES(${arg1} PROPERTIES LINK_FLAGS "-undefined dynamic_lookup -flat_namespace")
+ENDIF (APPLE)
+ENDFUNCTION(build_python_version arg1)
+
+IF (PYTHON3)
+build_python_version(symdiff_py3)
+TARGET_INCLUDE_DIRECTORIES (symdiff_py3 PUBLIC ${PYTHON3_INCLUDE})
+IF(WIN32)
+TARGET_LINK_LIBRARIES (symdiff_py3 ${PYTHON3_ARCHIVE})
+ELSE(WIN32)
+# macOS and Linux do not need to dynamically link against python
+ENDIF(WIN32)
+target_compile_definitions(symdiff_py3 PRIVATE -DPy_LIMITED_API=0x03090000)
+#TARGET_LINK_LIBRARIES (symdiff_py3 symdiff ${PYTHON3_ARCHIVE})
+ENDIF (PYTHON3)
+
+

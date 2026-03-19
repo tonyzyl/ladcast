@@ -1,0 +1,26 @@
+x
+y
+y__x
+0
+('y',)
+x
+('x', 'y')
+x
+While calling symdiff interpreter
+y is being processed in terms of itself
+
+x y
+y (a * x)
+y__x a
+
+x
+y
+y__x
+0
+(2 * x)
+(2 * x__z)
+x UNDEFINED
+x__z UNDEFINED
+y__x (2 * x)
+
+y__x (2 * x)

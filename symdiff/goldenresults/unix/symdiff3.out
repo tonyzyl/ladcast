@@ -1,0 +1,40 @@
+
+
+BEFORE
+
+
+a, (b + d)
+c, (b + d)
+
+
+AFTER
+
+
+a, unique0
+c, unique0
+unique0, (b + d)
+x, (a + c)
+
+
+ORDERED for a c
+
+
+unique0, (b + d)
+a, unique0
+c, unique0
+
+
+ORDERED for x
+
+
+unique0, (b + d)
+a, unique0
+c, unique0
+x, (a + c)
+
+
+ORDERED for a
+
+
+unique0, (b + d)
+a, unique0

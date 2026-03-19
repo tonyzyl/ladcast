@@ -1,0 +1,33 @@
+unique3, pow(T,(-1))
+unique12, (Ea * unique3)
+unique11, exp((-unique12))
+arrhenius, (Cf * pow(T,Etar) * unique11)
+fprod, UNDEFINED
+unique4, pow(A2,(-1))
+unique2, (-unique3 + unique4)
+unique5, pow(R,(-1))
+unique1, (A1 * unique2 * unique5)
+unique0, exp(unique1)
+KC1, (A3 * R * T * unique0)
+unique8, pow(KC1,(-1))
+kb_model, (arrhenius * unique8)
+rprod, (AR * CN * H)
+unique10, (vr_H - vf_H)
+omega_dot_H, ((-(kb_model * rprod) + (arrhenius * fprod)) * unique10)
+arrhenius__T, ((Cf * Ea * pow(T,(-2 + Etar)) * unique11) + (Cf * Etar * pow(T,(-1 + Etar)) * unique11))
+fprod__T, UNDEFINED
+KC1__T, ((A1 * A3 * unique0 * unique3) + (A3 * R * unique0))
+unique9, pow(KC1,(-2))
+kb_model__T, (-(KC1__T * arrhenius * unique9) + (arrhenius__T * unique8))
+omega_dot_H__T, ((-(kb_model__T * rprod) + (arrhenius * fprod__T) + (arrhenius__T * fprod)) * unique10)
+fprod__H, UNDEFINED
+rprod__H, (AR * CN)
+omega_dot_H__H, ((-(kb_model * rprod__H) + (arrhenius * fprod__H)) * unique10)
+fprod__HCN, UNDEFINED
+omega_dot_H__HCN, (arrhenius * fprod__HCN * unique10)
+fprod__AR, UNDEFINED
+rprod__AR, (CN * H)
+omega_dot_H__AR, ((-(kb_model * rprod__AR) + (arrhenius * fprod__AR)) * unique10)
+fprod__CN, UNDEFINED
+rprod__CN, (AR * H)
+omega_dot_H__CN, ((-(kb_model * rprod__CN) + (arrhenius * fprod__CN)) * unique10)

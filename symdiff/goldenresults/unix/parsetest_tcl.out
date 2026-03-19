@@ -1,0 +1,237 @@
+
+a*x
+(a * x)
+
+simplify(a*a)
+pow(a,2)
+
+simplify(pow(x, 0.0))
+1
+
+simplify(pow(x, 1.0))
+x
+
+simplify(pow(1.0, x))
+1
+
+simplify(exp(1.0))
+exp(1)
+
+simplify(exp(0.0))
+1
+
+simplify(exp(log(x)))
+x
+
+simplify(log(exp(x)))
+x
+
+simplify(log(1.0))
+0
+
+(exp(pow(c,pow(x,pow(c,x)))))
+exp(pow(c,pow(x,pow(c,x))))
+
+diff((exp(pow(c,pow(x,pow(c,x))))),x)
+(((pow(c,x) * pow(x,(pow(c,x) - 1))) + (pow(c,x) * pow(x,pow(c,x)) * log(c) * log(x))) * exp(pow(c,pow(x,pow(c,x)))) * pow(c,pow(x,pow(c,x))) * log(c))
+
+simplify(diff((exp(pow(c,pow(x,pow(c,x))))),x))
+(((pow(c,x) * pow(x,(-1 + pow(c,x)))) + (pow(c,x) * pow(x,pow(c,x)) * log(c) * log(x))) * exp(pow(c,pow(x,pow(c,x)))) * pow(c,pow(x,pow(c,x))) * log(c))
+
+simplify((((((((1 * pow(x,(-1))) * pow(c,x)) + ((log(c) * pow(c,x)) * log(x))) * pow(x,pow(c,x))) * log(c)) * pow(c,pow(x,pow(c,x)))) * exp(pow(c,pow(x,pow(c,x))))))
+(((pow(c,x) * log(c) * log(x)) + (pow(c,x) * pow(x,(-1)))) * exp(pow(c,pow(x,pow(c,x)))) * pow(c,pow(x,pow(c,x))) * pow(x,pow(c,x)) * log(c))
+
+simplify(a*5*pow(a,-1))
+5
+
+c*c*c*c
+(c * c * c * c)
+
+simplify(c*c*c*c)
+pow(c,4)
+
+diff(c*c*x*x,x)
+((c * c * x) + (c * c * x))
+
+simplify(log(pow(x,y)))
+(y * log(x))
+
+simplify(a*a+a*a*a)
+(pow(a,2) + pow(a,3))
+
+simplify(a*a+a*a)
+(2 * pow(a,2))
+
+simplify(a+a+a*a)
+((2 * a) + pow(a,2))
+
+simplify(a+a+a+a*a)
+((3 * a) + pow(a,2))
+
+simplify(y*pow(x,(-1)) * pow(x,y))
+(y * pow(x,(-1 + y)))
+
+simplify(pow(x,(-1)) * pow(x,y)*y)
+(y * pow(x,(-1 + y)))
+
+simplify(pow(x,(-1)) * pow(x,y)*x)
+pow(x,y)
+
+unscaledval(2*x)
+x
+
+scale(2*x)
+2
+
+a - a
+(a - a)
+
+a + -a
+(a - a)
+
+a - b
+(a - b)
+
+simplify(a - a)
+0
+
+simplify(a + -a)
+0
+
+simplify(a - b)
+(a - b)
+
+-simplify(a - b)
+(-(a - b))
+
+simplify(-simplify(a - b))
+(-(a - b))
+
+(-1*3*4*-3*x)
+(-(-3) * 3 * 4 * x)
+
+simplify(-1*3*4*-3*x)
+(36 * x)
+
+-a
+(-a)
+
+a++-+a
+(a - a)
+
+a+*+a
+While calling symdiff interpreter
+While evaluating expression "a+*+a"
+syntax error
+
+
+diff(-1*3*4*(-3)*x,x)
+(-(-3) * 3 * 4)
+
+diff(simplify(-1*3*4*(-3)*x),x)
+36
+
+diff((-1*3*4*(-3)*x),x)
+(-(-3) * 3 * 4)
+
+(a *(-a))
+(-a * a)
+
+(a * -a)
+(-a * a)
+
+(a * (+a))
+(a * a)
+
+(a * +a)
+(a * a)
+
+expand((a)*(c+d))
+((a * c) + (a * d))
+
+expand((a + b)*(c+d))
+((a * c) + (a * d) + (b * c) + (b * d))
+
+expand((a+b)*(c+d)*(e+f+g))
+((a * c * e) + (a * c * f) + (a * c * g) + (a * d * e) + (a * d * f) + (a * d * g) + (b * c * e) + (b * c * f) + (b * c * g) + (b * d * e) + (b * d * f) + (b * d * g))
+
+expand((a-1)*(b+1))
+(-1 + a - b + (a * b))
+
+expand((a-1)*(a+1))
+(-1 + pow(a,2))
+
+simplify((a-1)*(a+1)/(a+1))
+(-1 + a)
+
+simplify((a-1)*(a+1)^2/(a+1))
+((-1 + a) * (1 + a))
+
+simplify((a-1)*(a+1)^2/(a+1)^3)
+((-1 + a) * pow((1 + a),(-1)))
+
+expand((a-b)^-2)
+pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1))
+
+expand((a-b)^+2)
+(-(2 * a * b) + pow(a,2) + pow(b,2))
+
+expand(((a-b)^2)/((a-b)^2))
+(-(2 * a * b * pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1))) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(a,2)) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(b,2)))
+
+expand((a-b)^2/(a-b)^2)
+(-(2 * a * b * pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1))) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(a,2)) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(b,2)))
+
+simplify(expand((a-b)^2/(a-b)^2))
+(-(2 * a * b * pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1))) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(a,2)) + (pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow(b,2)))
+
+simplify((a-b)^2/expand((a-b)^2))
+(pow((-(2 * a * b) + pow(a,2) + pow(b,2)),(-1)) * pow((a - b),2))
+
+unscaledval(-1*10)
+1
+
+scale(-1*10)
+(-10)
+
+unsignedval(-1*10)
+(-10)
+
+sign(-1*10)
+1
+
+(a-3)
+(a + (-3))
+
+simplify(a-3)
+(-3 + a)
+
+2-10
+(2 + (-10))
+
+unscaledval(-10)
+1
+
+scale(-10)
+(-10)
+
+sign(-10)
+(-1)
+
+unsignedval(-10)
+10
+
+simplify(-8*a*x^2 -3*b*c^2)
+(-(3 * b * pow(c,2)) - (8 * a * pow(x,2)))
+
+simplify(x,y)
+While calling symdiff interpreter
+While evaluating expression "simplify(x,y)"
+Function "simplify" expects 1 argument and you provided 2: "x", "y"
+
+
+subst(y)
+While calling symdiff interpreter
+While evaluating expression "subst(y)"
+Function "subst" expects 3 arguments and you provided 1: "y"
+

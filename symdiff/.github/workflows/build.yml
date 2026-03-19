@@ -1,0 +1,96 @@
+on:
+  push:
+    tags:
+      - "v*"
+    # should we prevent main branch build?
+    # warning about tag variable when not a tag push,
+    # devsim_win64_refs/heads/r2.9.2
+    #branches:
+    #  - "r2.9.2"
+
+#TODO: handle common code in build steps
+
+jobs:
+  create_release_tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: false
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Use the default GITHUB_TOKEN
+        run: |
+          TAG=${GITHUB_REF#refs/tags/} # Extract the tag name from the ref
+          gh release create "$TAG" \
+            --prerelease \
+            --title "Release $TAG" \
+            --notes "Automated release for $TAG." \
+            --generate-notes # Automatically generate release notes based on commits
+          echo "Release $TAG created successfully."
+  build_windows:
+    if: true
+    name: Build on Windows
+    runs-on: windows-2025
+    needs: create_release_tag
+    steps:
+      - name: set git crlf
+        run: git config --global core.autocrlf input
+      - name: Set tags and variables
+        shell: bash
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "README_BASE_URL=https://github.com/devsim/symdiff/blob/${TAG}" >> $GITHUB_ENV
+          echo "PLATFORM=x64" >> $GITHUB_ENV
+          echo "CONDA_BIN=${CONDA}\\condabin\\conda.bat" >> $GITHUB_ENV
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: false
+      - name: compilation
+        shell: cmd
+        run: |
+          scripts\build_appveyor.bat %PLATFORM% %CONDA_BIN%
+      - name: Upload Release Asset ${{ runner.os }} ${{ runner.arch }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" *.whl
+          echo "Asset uploaded to release $TAG."
+  build_linux:
+    if: true
+    name: Build on Linux or macOS
+    needs: create_release_tag
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
+    runs-on: ${{matrix.os}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: false
+      - name: Set tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "README_BASE_URL=https://github.com/devsim/symdiff/blob/${TAG}" >> $GITHUB_ENV
+      - name: build ${{ runner.os }} ${{ runner.arch }}
+        run:   |
+               if [ "$RUNNER_OS" == "Linux" ]; then
+                    bash ./scripts/build_docker_manylinux_2_28.sh ${TAG};
+               elif [ "$RUNNER_OS" == "macOS" ]; then
+                    bash ./scripts/build_macos.sh ${TAG};
+               else
+                    echo "$RUNNER_OS not supported"
+                    exit 1
+               fi
+      - name: Upload Release Asset ${{ runner.os }} ${{ runner.arch }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" *.whl
+          echo "Asset uploaded to release $TAG."

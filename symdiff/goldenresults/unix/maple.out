@@ -1,0 +1,31 @@
+
+
+BEFORE
+
+
+f1, ((b * sin(a)) + (cos(a) * sin(a)))
+f2, ((b * cos(a) * sin(a)) + (cos(a) * cos(b) * sin(a)) + (cos(a) * sin(a)))
+f3, (-(b * cos(a) * sin(a)) + (a * cos(a)))
+
+
+ORDERED for f1, f2, f3
+
+
+unique0, sin(a)
+unique2, cos(a)
+unique9, (unique0 * unique2)
+f1, ((b * unique0) + unique9)
+unique12, (b * unique0 * unique2)
+unique6, cos(b)
+f2, ((unique0 * unique2 * unique6) + unique12 + unique9)
+f3, (-unique12 + (a * unique2))
+unique10, pow(unique0,2)
+unique11, pow(unique2,2)
+f1__a, (-unique10 + (b * unique2) + unique11)
+f1__b, unique0
+unique15, (b * unique10)
+unique16, (b * unique11)
+f2__a, (-(unique10 * unique6) - unique10 - unique15 + (unique11 * unique6) + unique11 + unique16)
+f2__b, (-(unique0 * unique2 * sin(b)) + unique9)
+f3__a, (-(a * unique0) - unique16 + unique15 + unique2)
+f3__b, (-unique9)
