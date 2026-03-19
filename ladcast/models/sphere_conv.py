@@ -96,16 +96,14 @@ class SphereConv2d(nn.Conv2d):
         This is used to handle the top row of the spherical convolution after padding.
         """
         # Flip the top row weight for top slice convolution
-        kernel = self.weight.data
+        kernel = self.weight.clone()
         kernel[:, :, : self.padding[0], :] = torch.flip(
             kernel[:, :, : self.padding[0], :], dims=[3]
         )
         output = F.conv2d(
             input, kernel, self.bias, self.stride, 0, self.dilation, self.groups
         )
-        kernel[:, :, : self.padding[0], :] = torch.flip(
-            kernel[:, :, : self.padding[0], :], dims=[3]
-        )
+
 
         return output
 
@@ -115,15 +113,12 @@ class SphereConv2d(nn.Conv2d):
         This is used to handle the bottom row of the spherical convolution after padding.
         """
         # Flip the bottom row weight for bottom slice convolution
-        kernel = self.weight.data
+        kernel = self.weight.clone()
         kernel[:, :, -self.padding[0] :, :] = torch.flip(
             kernel[:, :, -self.padding[0] :, :], dims=[3]
         )
         output = F.conv2d(
             input, kernel, self.bias, self.stride, 0, self.dilation, self.groups
-        )
-        kernel[:, :, -self.padding[0] :, :] = torch.flip(
-            kernel[:, :, -self.padding[0] :, :], dims=[3]
         )
 
         return output

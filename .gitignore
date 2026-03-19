@@ -12,4 +12,7 @@ wheels/
 wandb/
 
 data/
-ladcast/configs
+ladcast/configs/
+checkpoints/
+static/
+
