@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import random
 import sys
@@ -15,7 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ladcast.dataloader.routeB_latent_dataset import RouteBLatentDataset
-
+from ladcast.models.routeB_latent_ar import RouteBNonSymmResNet, RouteBSymmResNet, TinyLatentAR
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RouteB latent AR training (single process, minimal).")
@@ -35,7 +36,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--max_steps", type=int, default=20000)
+    parser.add_argument("--model_type", type=str, default="symm_resnet", choices=["tiny_ar", "non_symm_resnet", "symm_resnet"])
+    parser.add_argument("--hidden_channels", type=int, default=128)
+    parser.add_argument("--num_blocks", type=int, default=6)
+    parser.add_argument("--kernel_size", type=int, default=3)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--max_lon_shift", type=int, default=16)
 
+    parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--log_every", type=int, default=20)
     parser.add_argument("--val_every", type=int, default=200)
     parser.add_argument("--val_batches", type=int, default=20)
@@ -60,24 +68,15 @@ def infinite_loader(loader: DataLoader) -> Iterator[dict]:
         for batch in loader:
             yield batch
 
+def emit_log(**payload) -> None:
+    print(json.dumps(payload, sort_keys=True))
 
-class TinyLatentAR(nn.Module):
-    """Minimal latent AR predictor: (B,Sin,C,H,W) -> (B,Sout,C,H,W)."""
 
-    def __init__(self, in_seq: int, out_seq: int, channels: int):
-        super().__init__()
-        self.in_seq = in_seq
-        self.out_seq = out_seq
-        self.channels = channels
-        self.proj = nn.Conv2d(in_seq * channels, out_seq * channels, kernel_size=1)
+def default_run_name(args: argparse.Namespace) -> str:
+    return f"{args.model_type}_in{args.input_seq_len}_out{args.return_seq_len}_bs{args.batch_size}_steps{args.max_steps}_seed{args.seed}"
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, s, c, h, w = x.shape
-        x = x.reshape(b, s * c, h, w)
-        y = self.proj(x)
-        y = y.reshape(b, self.out_seq, c, h, w)
-        return y
-
+def checkpoint_path(checkpoint_dir: str, run_name: str, suffix: str) -> str:
+    return os.path.join(checkpoint_dir, f"{run_name}_{suffix}.pt")
 
 def check_batch_shapes(batch: dict, input_seq_len: int, return_seq_len: int) -> None:
     x_in = batch["x_in"]
@@ -170,6 +169,12 @@ def save_checkpoint(
                 "interval_between_pred": args.interval_between_pred,
                 "batch_size": args.batch_size,
                 "lr": args.lr,
+                "model_type": args.model_type,
+                "hidden_channels": args.hidden_channels,
+                "num_blocks": args.num_blocks,
+                "kernel_size": args.kernel_size,
+                "dropout": args.dropout,
+                "max_lon_shift": args.max_lon_shift,
             },
             "channels": channels,
             "spatial": spatial,
@@ -245,12 +250,42 @@ def main() -> None:
     channels = int(sample0["x_in"].shape[1])
     spatial = (int(sample0["x_in"].shape[2]), int(sample0["x_in"].shape[3]))
 
-    print(
-        f"train_len={len(train_dataset)} valid_len={len(valid_dataset)} "
-        f"channels={channels} spatial={spatial}"
+    run_name = args.run_name or default_run_name(args)
+
+    emit_log(
+        event="init",
+        model_name=args.model_type,
+        run_name=run_name,
+        train_len=len(train_dataset),
+        valid_len=len(valid_dataset),
+        channels=channels,
+        spatial=spatial,
     )
 
-    model = TinyLatentAR(args.input_seq_len, args.return_seq_len, channels).to(device)
+    if args.model_type == "tiny_ar":
+        model = TinyLatentAR(args.input_seq_len, args.return_seq_len, channels)
+    elif args.model_type == "non_symm_resnet":
+        model = RouteBNonSymmResNet(
+            args.input_seq_len,
+            args.return_seq_len,
+            channels,
+            hidden_channels=args.hidden_channels,
+            num_blocks=args.num_blocks,
+            kernel_size=args.kernel_size,
+            dropout=args.dropout,
+        )
+    else:
+        model = RouteBSymmResNet(
+            args.input_seq_len,
+            args.return_seq_len,
+            channels,
+            hidden_channels=args.hidden_channels,
+            num_blocks=args.num_blocks,
+            kernel_size=args.kernel_size,
+            dropout=args.dropout,
+            max_lon_shift=args.max_lon_shift,
+        )
+    model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
 
@@ -267,7 +302,7 @@ def main() -> None:
         start_step = last_step + 1
         best_valid_loss = float(ckpt.get("valid_loss", float("inf")))
         latest_valid_loss = float(ckpt.get("valid_loss", float("nan")))
-        print(f"Resumed from {resume_path}, last_step={last_step}")
+        emit_log(event="resume", model_name=args.model_type, run_name=run_name, path=resume_path, last_step=last_step)
 
     model.train()
     train_iter = infinite_loader(train_loader)
@@ -297,7 +332,7 @@ def main() -> None:
         train_loss = float(loss.item())
 
         if step % args.log_every == 0 or step == 1:
-            print(f"step={step:06d} train_loss={train_loss:.8f}")
+            emit_log(event="train", model_name=args.model_type, run_name=run_name, step=step, train_latent_mse=train_loss)
 
         if step % args.val_every == 0:
             latest_valid_loss = validate(
@@ -309,11 +344,11 @@ def main() -> None:
                 args.input_seq_len,
                 args.return_seq_len,
             )
-            print(f"step={step:06d} valid_loss={latest_valid_loss:.8f}")
+            emit_log(event="valid", model_name=args.model_type, run_name=run_name, step=step, valid_latent_mse=latest_valid_loss)
 
             if latest_valid_loss < best_valid_loss:
                 best_valid_loss = latest_valid_loss
-                best_path = os.path.join(checkpoint_dir, "routeB_ar_best.pt")
+                best_path = checkpoint_path(checkpoint_dir, run_name, "best")
                 save_checkpoint(
                     best_path,
                     model,
@@ -325,11 +360,11 @@ def main() -> None:
                     channels,
                     spatial,
                 )
-                print(f"saved_best={best_path}")
+                emit_log(event="checkpoint", model_name=args.model_type, run_name=run_name, step=step, checkpoint_type="best", path=best_path)
 
         if step % args.save_every == 0:
-            step_path = os.path.join(checkpoint_dir, f"routeB_ar_step_{step:06d}.pt")
-            latest_path = os.path.join(checkpoint_dir, "routeB_ar_latest.pt")
+            step_path = checkpoint_path(checkpoint_dir, run_name, f"step_{step:06d}")
+            latest_path = checkpoint_path(checkpoint_dir, run_name, "latest")
             save_checkpoint(
                 step_path,
                 model,
@@ -352,11 +387,11 @@ def main() -> None:
                 channels,
                 spatial,
             )
-            print(f"saved_step={step_path}")
-            print(f"saved_latest={latest_path}")
+            emit_log(event="checkpoint", model_name=args.model_type, run_name=run_name, step=step, checkpoint_type="step", path=step_path)
+            emit_log(event="checkpoint", model_name=args.model_type, run_name=run_name, step=step, checkpoint_type="latest", path=latest_path)
 
     final_step = args.max_steps if args.max_steps >= start_step else start_step - 1
-    final_path = os.path.join(checkpoint_dir, "routeB_ar_final.pt")
+    final_path = checkpoint_path(checkpoint_dir, run_name, "final")
     save_checkpoint(
         final_path,
         model,
@@ -369,7 +404,7 @@ def main() -> None:
         spatial,
     )
     print(f"saved_final={final_path}")
-
+    emit_log(event="checkpoint", model_name=args.model_type, run_name=run_name, step=final_step, checkpoint_type="final", path=final_path)
 
 if __name__ == "__main__":
     main()

@@ -15,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ladcast.dataloader.routeB_latent_dataset import RouteBLatentDataset
-
+from ladcast.models.routeB_latent_ar import RouteBNonSymmResNet, RouteBSymmResNet, TinyLatentAR
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Minimal single-process RouteB latent AR smoke train.")
@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--model_type", type=str, default="symm_resnet", choices=["tiny_ar", "non_symm_resnet", "symm_resnet"])
+    parser.add_argument("--hidden_channels", type=int, default=64)
+    parser.add_argument("--num_blocks", type=int, default=4)
+    parser.add_argument("--kernel_size", type=int, default=3)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--max_lon_shift", type=int, default=16)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument(
         "--checkpoint_path",
@@ -53,26 +59,6 @@ def infinite_loader(loader: DataLoader) -> Iterator[dict]:
     while True:
         for batch in loader:
             yield batch
-
-
-class TinyLatentAR(nn.Module):
-    """Maps input latent sequence -> predicted latent sequence using a single conv."""
-
-    def __init__(self, in_seq: int, out_seq: int, channels: int):
-        super().__init__()
-        self.in_seq = in_seq
-        self.out_seq = out_seq
-        self.channels = channels
-        self.proj = nn.Conv2d(in_seq * channels, out_seq * channels, kernel_size=1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, S_in, C, H, W)
-        b, s, c, h, w = x.shape
-        x = x.reshape(b, s * c, h, w)
-        y = self.proj(x)
-        y = y.reshape(b, self.out_seq, c, h, w)
-        return y
-
 
 def main() -> None:
     args = parse_args()
@@ -107,9 +93,33 @@ def main() -> None:
     c = int(sample0["x_in"].shape[1])
     h = int(sample0["x_in"].shape[2])
     w = int(sample0["x_in"].shape[3])
-    print(f"dataset_len={len(dataset)} channels={c} spatial=({h},{w})")
 
-    model = TinyLatentAR(args.input_seq_len, args.return_seq_len, c).to(device)
+    print(f"dataset_len={len(dataset)} channels={c} spatial=({h},{w}) model_type={args.model_type}")
+
+    if args.model_type == "tiny_ar":
+        model = TinyLatentAR(args.input_seq_len, args.return_seq_len, c)
+    elif args.model_type == "non_symm_resnet":
+        model = RouteBNonSymmResNet(
+            args.input_seq_len,
+            args.return_seq_len,
+            c,
+            hidden_channels=args.hidden_channels,
+            num_blocks=args.num_blocks,
+            kernel_size=args.kernel_size,
+            dropout=args.dropout,
+        )
+    else:
+        model = RouteBSymmResNet(
+            args.input_seq_len,
+            args.return_seq_len,
+            c,
+            hidden_channels=args.hidden_channels,
+            num_blocks=args.num_blocks,
+            kernel_size=args.kernel_size,
+            dropout=args.dropout,
+            max_lon_shift=args.max_lon_shift,
+        )
+    model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
     loss_fn = nn.MSELoss()
 
@@ -147,6 +157,12 @@ def main() -> None:
             "return_seq_len": args.return_seq_len,
             "channels": c,
             "max_steps": args.max_steps,
+            "model_type": args.model_type,
+            "hidden_channels": args.hidden_channels,
+            "num_blocks": args.num_blocks,
+            "kernel_size": args.kernel_size,
+            "dropout": args.dropout,
+            "max_lon_shift": args.max_lon_shift,
             "final_loss": float(loss.item()),
         },
         checkpoint_path,
