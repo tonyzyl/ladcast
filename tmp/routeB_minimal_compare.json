@@ -1,0 +1,79 @@
+{
+  "settings": {
+    "latent_path": "/home/limaocheng/ladcast/data/routeB_latent_train.zarr",
+    "latent_norm_json": "/home/limaocheng/ladcast/static/ERA5_routeB_latent_normal_train.json",
+    "train_start_time": "2018-01-01T00",
+    "train_end_time": "2018-01-31T23",
+    "valid_start_time": "2018-02-01T00",
+    "valid_end_time": "2018-02-07T23",
+    "input_seq_len": 1,
+    "return_seq_len": 1,
+    "interval_between_pred": 1,
+    "batch_size": 8,
+    "max_steps": 2000,
+    "num_inference_steps": 50,
+    "seed": 42
+  },
+  "baselines": [
+    {
+      "model_name": "tiny_ar",
+      "train_metric_last": 0.7673061490058899,
+      "valid_latent_mse": 0.8595784366130829,
+      "seconds_total": 982.0462743409444,
+      "seconds_per_step": 0.4910231371704722,
+      "param_count": 72,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "non_symm_resnet",
+      "train_metric_last": 0.002463333774358034,
+      "valid_latent_mse": 0.004065098194405437,
+      "seconds_total": 775.0432749700267,
+      "seconds_per_step": 0.38752163748501334,
+      "param_count": 2071688,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "routeB_diffusion_nonsymm",
+      "train_metric_last": 0.01520757656544447,
+      "valid_latent_mse": 0.009306461177766323,
+      "seconds_total": 749.8502496678848,
+      "seconds_per_step": 0.3749251248339424,
+      "param_count": 2401672,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "routeB_symdiff",
+      "train_metric_last": 0.010957617312669754,
+      "valid_latent_mse": 0.02109163738787174,
+      "seconds_total": 951.2313550750259,
+      "seconds_per_step": 0.475615677537513,
+      "param_count": 2401672,
+      "inference_ablation": [
+        {
+          "mode": "identity",
+          "valid_latent_mse": 0.02121755601838231
+        },
+        {
+          "mode": "random_single",
+          "valid_latent_mse": 0.021099256910383703
+        },
+        {
+          "mode": "fixed_group",
+          "valid_latent_mse": 0.021104737278074027
+        },
+        {
+          "mode": "group_mean_4",
+          "valid_latent_mse": 0.01995815187692642
+        },
+        {
+          "mode": "group_mean_8",
+          "valid_latent_mse": 0.019456310104578732
+        }
+      ]
+    }
+  ],
+  "result_table": "| model | train metric last | valid latent MSE | seconds/step | params |\n|---|---:|---:|---:|---:|\n| tiny_ar | 0.767306 | 0.859578 | 0.491023 | 72 |\n| non_symm_resnet | 0.002463 | 0.004065 | 0.387522 | 2071688 |\n| routeB_diffusion_nonsymm | 0.015208 | 0.009306 | 0.374925 | 2401672 |\n| routeB_symdiff | 0.010958 | 0.021092 | 0.475616 | 2401672 |",
+  "conclusion_a": "Diffusion does not beat the best supervised predictor; gap=0.005241 latent MSE",
+  "conclusion_b": "Symmetry-aware diffusion does not improve over non-symmetric diffusion; gap=0.011785 latent MSE"
+}
