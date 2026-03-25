@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from ladcast.models.routeB_latent_ar import CircularLonConv2d, _group_norm_groups
+from ladcast.models.routeB_fourier_shift import apply_fourier_shift_5d, invert_fourier_shift_5d
 from ladcast.models.symmetry import apply_lon_roll_5d, invert_lon_roll_5d
 
 
@@ -52,7 +53,14 @@ class SymDiffResBlock2d(nn.Module):
 
 
 class RouteBSymDiffDenoiser(nn.Module):
-    """Conditional epsilon denoiser for routeB latent diffusion with stochastic lon-roll symmetrisation."""
+    """Conditional epsilon denoiser for routeB latent diffusion with stochastic symmetrisation.
+
+    Args:
+        symmetry_type: "roll" (integer circular shift, legacy) or "fourier" (phase rotation).
+            Determines how group_state is interpreted in forward():
+            - "roll": group_state is (B,) LongTensor of integer shifts
+            - "fourier": group_state is (B,) FloatTensor of phase angles in radians
+    """
 
     def __init__(
             self,
@@ -64,11 +72,15 @@ class RouteBSymDiffDenoiser(nn.Module):
             kernel_size: int = 3,
             dropout: float = 0.0,
             time_embed_dim: int = 256,
+            symmetry_type: str = "roll",
     ):
         super().__init__()
+        if symmetry_type not in ("roll", "fourier"):
+            raise ValueError(f"Unknown symmetry_type: {symmetry_type}")
         self.channels = channels
         self.cond_seq_len = cond_seq_len
         self.target_seq_len = target_seq_len
+        self.symmetry_type = symmetry_type
         in_channels = (cond_seq_len + target_seq_len) * channels
         out_channels = target_seq_len * channels
 
@@ -114,8 +126,12 @@ class RouteBSymDiffDenoiser(nn.Module):
             raise ValueError("cond and noisy_target batch sizes must match")
 
         if group_state is not None:
-            cond = apply_lon_roll_5d(cond, group_state)
-            noisy_target = apply_lon_roll_5d(noisy_target, group_state)
+            if self.symmetry_type == "roll":
+                cond = apply_lon_roll_5d(cond, group_state)
+                noisy_target = apply_lon_roll_5d(noisy_target, group_state)
+            else:  # fourier
+                cond = apply_fourier_shift_5d(cond, group_state)
+                noisy_target = apply_fourier_shift_5d(noisy_target, group_state)
 
         b, s_in, c, h, w = cond.shape
         _, s_out, c_out, h_out, w_out = noisy_target.shape
@@ -138,5 +154,8 @@ class RouteBSymDiffDenoiser(nn.Module):
         pred_eps = self.output_head(x).reshape(b, s_out, c_out, h, w)
 
         if group_state is not None:
-            pred_eps = invert_lon_roll_5d(pred_eps, group_state)
+            if self.symmetry_type == "roll":
+                pred_eps = invert_lon_roll_5d(pred_eps, group_state)
+            else:  # fourier
+                pred_eps = invert_fourier_shift_5d(pred_eps, group_state)
         return pred_eps
