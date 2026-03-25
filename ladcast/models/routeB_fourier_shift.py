@@ -35,10 +35,11 @@ class FourierLongitudeShift(nn.Module):
         freq = torch.arange(Z.shape[-1], device=z.device, dtype=z.dtype)
 
         # Broadcast phase_angle (B,) to match Z shape
-        # phase_angle: (B,) -> (B, 1, ..., 1, freq)
-        n_extra = z.ndim - 1  # dims between batch and the freq dim
-        view_shape = [phase_angle.shape[0]] + [1] * (n_extra - 1) + [Z.shape[-1]]
-        phase = phase_angle.view(view_shape) * freq.view([1] * n_extra + [-1])
+        # phase_angle (B,) → (B, 1, ..., 1) then * freq (F,) → (B, 1, ..., 1, F) via broadcast
+        pa = phase_angle
+        for _ in range(z.ndim - 1):
+            pa = pa.unsqueeze(-1)  # (B,) → (B,1) → (B,1,1) → ...
+        phase = pa * freq  # broadcast: (B, 1, ..., 1) * (F,) → (B, 1, ..., F)
 
         rotation = torch.complex(torch.cos(phase), torch.sin(phase))
         Z_shifted = Z * rotation
