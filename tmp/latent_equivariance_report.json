@@ -1,0 +1,13 @@
+{
+  "num_samples": 50,
+  "spatial": [
+    32,
+    60
+  ],
+  "channels": 8,
+  "baseline_energy": 0.9884628653526306,
+  "spectral_flatness_mean": 0.09070802479982376,
+  "spectral_flatness_min": 0.044221989810466766,
+  "variance_ratio_w_over_h": 0.4214776538128068,
+  "verdict": "FAIL"
+}

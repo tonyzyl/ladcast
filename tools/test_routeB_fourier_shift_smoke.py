@@ -53,7 +53,8 @@ def test_zero_phase():
 def test_gradient_flow():
     shifter = FourierLongitudeShift()
     z = torch.randn(4, 84, 15, 30, requires_grad=True)
-    phi = torch.rand(4, requires_grad=True) * 2 * torch.pi
+    phi = torch.rand(4) * 2 * torch.pi
+    phi.requires_grad_(True)
 
     z_shifted = shifter.forward_shift(z, phi)
     loss = z_shifted.sum()

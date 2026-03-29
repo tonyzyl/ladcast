@@ -42,6 +42,14 @@ class FourierLongitudeShift(nn.Module):
         phase = pa * freq  # broadcast: (B, 1, ..., 1) * (F,) → (B, 1, ..., F)
 
         rotation = torch.complex(torch.cos(phase), torch.sin(phase))
+        # For even W, the Nyquist bin (last rfft coeff) must stay real for
+        # Hermitian symmetry.  Rotating it introduces an imaginary part that
+        # irfft silently drops, breaking the roundtrip.  Fix: don't rotate it.
+        if W % 2 == 0:
+            rotation[..., -1] = torch.complex(
+                torch.ones_like(phase[..., -1]),
+                torch.zeros_like(phase[..., -1]),
+            )
         Z_shifted = Z * rotation
         return torch.fft.irfft(Z_shifted, n=W, dim=-1)
 
