@@ -647,6 +647,7 @@ class LaDCastTransformer3DModel(
         incl_time_elapsed: bool = False,
         nope: bool = False,
         scale_attn_by_lat: bool = False,
+        terrain_channels: int = 0,
     ) -> None:
         super().__init__()
 
@@ -678,6 +679,14 @@ class LaDCastTransformer3DModel(
             )
         else:
             self.time_elapsed_embed = None
+
+        # Terrain conditioning (GSNO-based)
+        if terrain_channels and terrain_channels > 0:
+            self.terrain_embedder = HunyuanVideoPatchEmbed(
+                (patch_size_t, patch_size, patch_size),
+                terrain_channels,
+                inner_dim,
+            )
 
         self.scale_attn_by_lat = scale_attn_by_lat
         if scale_attn_by_lat:
@@ -844,6 +853,7 @@ class LaDCastTransformer3DModel(
         coords: Optional[
             torch.Tensor
         ] = None,  # (B, 2), containing (x, y) coordinates of the top left for each batch
+        terrain_features: Optional[torch.Tensor] = None,  # (B, C_terrain, H, W)
     ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
@@ -949,6 +959,16 @@ class LaDCastTransformer3DModel(
             image_rotary_emb=cond_image_rotary_emb,
             attention_mask=cond_attention_mask,
         )
+
+        # Terrain conditioning injection
+        if terrain_features is not None and hasattr(self, "terrain_embedder"):
+            # terrain_features: (B, C_terrain, H, W) -> expand to 5D matching cond temporal dim
+            T_cond = conditioning_tensors.shape[2]
+            terrain_5d = terrain_features.unsqueeze(2).expand(
+                -1, -1, T_cond, -1, -1
+            )
+            terrain_tokens = self.terrain_embedder(terrain_5d)  # (B, N_patch, C)
+            encoder_hidden_states = encoder_hidden_states + terrain_tokens
 
         with torch.autocast(hidden_states.device.type, torch.float32):
             temb = self.time_text_embed(

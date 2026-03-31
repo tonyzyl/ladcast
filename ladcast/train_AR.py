@@ -6,6 +6,7 @@ import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from typing import Optional
 
 import accelerate
 import numpy as np
@@ -46,6 +47,7 @@ from ladcast.models.symmetry import (
     invert_lon_roll_5d,
     sample_lon_roll_shifts,
 )
+from ladcast.models.terrain_encoder import TerrainEncoder
 from ladcast.models.utils import Karras_sigmas_lognormal
 from ladcast.pipelines.pipeline_AR import AutoRegressive2DPipeline
 from ladcast.pipelines.utils import ensemble_AR_sampler, get_sigmas
@@ -80,6 +82,7 @@ def log_validation(
     eval_ms: bool = True,
     eval_crps: bool = True,
     return_df: bool = False,
+    terrain_features: Optional[torch.Tensor] = None,
 ):
     """
     timestamp_list: list of timestamps @ t=0,
@@ -132,7 +135,15 @@ def log_validation(
     step_hour_list = [i * step_size_hour for i in range(1, total_num_steps + 1)]
 
     noise_scheduler = instantiate_from_config(noise_scheduler_config)
-    pipeline = AutoRegressive2DPipeline(ar_model, scheduler=noise_scheduler)
+    _val_model_kwargs = {}
+    if terrain_features is not None:
+        _val_model_kwargs["terrain_features"] = terrain_features
+    pipeline = AutoRegressive2DPipeline(
+        ar_model, scheduler=noise_scheduler, model_kwargs=_val_model_kwargs,
+    )
+    _val_sampler_kwargs = {}
+    if terrain_features is not None:
+        _val_sampler_kwargs["model_kwargs"] = _val_model_kwargs
 
     latitude = np.linspace(-88.5, 90, 120)  # crop south pole
     lat_weight = get_normalized_lat_weights_based_on_cos(latitude)  # (lat,)
@@ -231,6 +242,7 @@ def log_validation(
                 timestamps=timestamps,
                 sampler_type="edm",
                 device=pipeline._execution_device,
+                sampler_kwargs=_val_sampler_kwargs,
             )
             # Update known_latents for the next prediction step
             # print('process', accelerator.process_index, 'finish edm_sample_latents')
@@ -246,6 +258,7 @@ def log_validation(
                     timestamps=timestamps,
                     sampler_type="pipeline",
                     device=pipeline._execution_device,
+                    sampler_kwargs=_val_sampler_kwargs,
                 )
                 ms_known_latents = ms_sample_latents[:, :, -input_seq_len:].clone()
 
@@ -477,6 +490,42 @@ def parse_args():
         default="dcae",
         help="The Encoder-Decoder model backbone.",
     )  # dcae, vae
+    parser.add_argument(
+        "--use_terrain",
+        action="store_true",
+        default=False,
+        help="Enable GSNO terrain conditioning.",
+    )
+    parser.add_argument(
+        "--terrain_embed_dim",
+        type=int,
+        default=64,
+        help="Hidden dimension for TerrainEncoder GSNO blocks.",
+    )
+    parser.add_argument(
+        "--terrain_out_channels",
+        type=int,
+        default=32,
+        help="Number of output channels from TerrainEncoder (must match ar_model terrain_channels).",
+    )
+    parser.add_argument(
+        "--terrain_use_sht",
+        action="store_true",
+        default=False,
+        help="Use SHT backend (requires torch_harmonics) instead of FFT for TerrainEncoder.",
+    )
+    parser.add_argument(
+        "--lsm_path",
+        type=str,
+        default="ladcast/static/240x121_land_sea_mask.pt",
+        help="Path to land-sea mask tensor.",
+    )
+    parser.add_argument(
+        "--orography_path",
+        type=str,
+        default="ladcast/static/240x121_orography.pt",
+        help="Path to orography tensor.",
+    )
 
     return parser.parse_args()
 
@@ -511,6 +560,42 @@ def main(args):
         raise NotImplementedError(f"Unknown autoregressive model class: {args.ar_cls}")
     ar_model = ar_model_cls.from_config(config=ar_model_config)
     ar_model.requires_grad_(True)
+
+    # --- Terrain encoder (GSNO) ---
+    terrain_encoder = None
+    static_terrain_input = None
+    if args.use_terrain:
+        terrain_encoder = TerrainEncoder(
+            in_channels=5,  # 1 LSM + 4 orography
+            embed_dim=args.terrain_embed_dim,
+            out_channels=args.terrain_out_channels,
+            phys_nlat=120,   # after south pole crop
+            phys_nlon=240,
+            latent_nlat=15,
+            latent_nlon=30,
+            use_sht=args.terrain_use_sht,
+        )
+        terrain_encoder.requires_grad_(True)
+
+        # Load static fields
+        lsm_tensor = torch.load(args.lsm_path, weights_only=True)         # (121, 240)
+        orography_tensor = torch.load(args.orography_path, weights_only=True)  # (4, 121, 240)
+        # Crop south pole (consistent with LaDCast convention)
+        lsm_tensor = lsm_tensor[1:, :]             # (120, 240)
+        orography_tensor = orography_tensor[:, 1:, :]  # (4, 120, 240)
+        # Concatenate and normalize
+        static_terrain_input = torch.cat(
+            [lsm_tensor.unsqueeze(0), orography_tensor], dim=0
+        )  # (5, 120, 240)
+        static_mean = static_terrain_input.mean(dim=(1, 2), keepdim=True)
+        static_std = static_terrain_input.std(dim=(1, 2), keepdim=True).clamp(min=1e-6)
+        static_terrain_input = (static_terrain_input - static_mean) / static_std
+        static_terrain_input = static_terrain_input.unsqueeze(0)  # (1, 5, 120, 240)
+        logger.info(
+            f"Terrain encoder enabled: embed_dim={args.terrain_embed_dim}, "
+            f"out_channels={args.terrain_out_channels}, "
+            f"params={sum(p.numel() for p in terrain_encoder.parameters()):,}"
+        )
 
     repo_name = args.hub_model_id
     if args.encdec_cls == "dcae":
@@ -671,8 +756,12 @@ def main(args):
             * train_dataloader_config.batch_size
         )
 
+    # Combine parameters: ar_model + optional terrain_encoder
+    trainable_params = list(ar_model.parameters())
+    if terrain_encoder is not None:
+        trainable_params += list(terrain_encoder.parameters())
     optimizer = AdamW(
-        ar_model.parameters(), **OmegaConf.to_container(optimizer_config, resolve=True)
+        trainable_params, **OmegaConf.to_container(optimizer_config, resolve=True)
     )
 
     if "subbatch_steps" in general_config:
@@ -728,6 +817,11 @@ def main(args):
 
     # TODO: maybe only load vae when logging image
     encdec_model = encdec_model.to(accelerator.device)
+
+    # Move terrain data to device
+    if terrain_encoder is not None:
+        terrain_encoder = terrain_encoder.to(accelerator.device)
+        static_terrain_input = static_terrain_input.to(accelerator.device)
 
     ar_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         ar_model, optimizer, train_dataloader, lr_scheduler
@@ -880,6 +974,13 @@ def main(args):
                 noise = torch.randn(clean_images.shape, device=clean_images.device)
                 bs = clean_images.shape[0]
 
+                # Compute terrain features (static input, but needs grad for terrain_encoder training)
+                terrain_feats = None
+                if terrain_encoder is not None:
+                    terrain_encoder.train()
+                    terrain_batch = static_terrain_input.expand(bs, -1, -1, -1)
+                    terrain_feats = terrain_encoder(terrain_batch)
+
                 # Sample a random timestep for each image
                 # diffusers/examples/dreambooth/train_dreambooth_lora_sdxl.py
                 if not general_config.do_edm_style_training:
@@ -981,12 +1082,16 @@ def main(args):
                                     sigmas,
                                 )
 
+                    _terrain_kwargs = {}
+                    if terrain_feats is not None:
+                        _terrain_kwargs["terrain_features"] = terrain_feats
                     model_pred[:, :, start_idx:end_idx] = ar_model(
                         tmp_x_in,
                         timesteps,
                         initial_profile_for_model,
                         time_elapsed=timestamps,
                         return_dict=False,
+                        **_terrain_kwargs,
                     )[0]
 
                 weighting = None
@@ -1188,6 +1293,12 @@ def main(args):
                 val_timerange4pred
             ) as input_timestamp:
                 # print(f'process {accelerator.process_index} is processing {input_timestamp}')
+                # Pre-compute terrain features for validation
+                _val_terrain = None
+                if terrain_encoder is not None:
+                    terrain_encoder.eval()
+                    with torch.no_grad():
+                        _val_terrain = terrain_encoder(static_terrain_input)  # (1, C_t, 15, 30)
                 log_validation(
                     "val",
                     xr_dataset=val_dataset,
@@ -1206,6 +1317,7 @@ def main(args):
                     ensemble_size=10,
                     num_inference_steps=20,
                     eval_ms=False,
+                    terrain_features=_val_terrain,
                 )
             if accelerator.is_main_process:
                 if ema_config.use_ema:
