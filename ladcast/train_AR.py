@@ -464,13 +464,13 @@ def parse_args():
     parser.add_argument(
         "--norm_json_path",
         type=str,
-        default="static/ERA5_normal_1979_2017.json",
+        default="static/ERA5_routeB_normal_1979_2017.json",
         help=("Path to the JSON file containing the normalization statistics."),
     )
     parser.add_argument(
         "--latent_norm_json_path",
         type=str,
-        default="static/ERA5_latent_normal_1979_2017_lat84.json",
+        default="static/ERA5_routeB_latent_normal_1979_2017.json",
         help="Path to the JSON file containing the normalization parameters for the latent space.",
     )
     parser.add_argument(
@@ -532,6 +532,8 @@ def parse_args():
 
 def main(args):
     # workflow based on: https://github.com/huggingface/diffusers/blob/main/examples/dreambooth/train_dreambooth_lora_sdxl.py
+    from accelerate.state import PartialState
+    PartialState()
 
     config = OmegaConf.load(args.config)
     tracker_config = flatten_and_filter_config(

@@ -210,26 +210,28 @@ def precompute_mean_std(normalization_param_dict: Dict, variable_names: list):
             norm_params = normalization_param_dict[var_name]
 
             if isinstance(norm_params["mean"], dict):
-                # If the variable has level-based mean and std, create one tensor per level
+                # 原来支持旧格式: {"50": ..., "100": ...}
                 for level in norm_params["mean"].keys():
                     mean_list.append(norm_params["mean"][level])
                     std_list.append(norm_params["std"][level])
+
+            elif isinstance(norm_params["mean"], (list, tuple)):
+                # 新增支持 list 格式: [v1, v2, ..., v13]
+                mean_list.extend(norm_params["mean"])
+                std_list.extend(norm_params["std"])
+
             else:
                 # For regular variables, add mean and std directly
                 mean_list.append(norm_params["mean"])
                 std_list.append(norm_params["std"])
         else:
-            # If no normalization info is found, use 0 mean and 1 std (no normalization)
             raise ValueError(
                 f"No normalization parameters found for variable {var_name}."
             )
-            # mean_list.append(0)
-            # std_list.append(1)
-            # Warning(f"No normalization parameters found for variable {var_name}. Using 0 mean and 1 std.")
 
     # Convert lists to PyTorch tensors
-    mean_tensor = torch.tensor(mean_list)
-    std_tensor = torch.tensor(std_list)
+    mean_tensor = torch.tensor(mean_list, dtype=torch.float32)
+    std_tensor = torch.tensor(std_list, dtype=torch.float32)
 
     return mean_tensor, std_tensor
 
