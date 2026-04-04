@@ -216,14 +216,14 @@ def log_validation(
         edm_decoded_tensor = torch.full(
             (ensemble_size, 84, total_num_steps, 120, 240),
             float("nan"),
-            device=accelerator.device,
+            device="cpu",
         )
         if eval_ms:
             ms_known_latents = known_latents.clone()
             ms_decoded_tensor = torch.full(
                 (ensemble_size, 84, total_num_steps, 120, 240),
                 float("nan"),
-                device=accelerator.device,
+                device="cpu",
             )
         # rolling out the prediction
         for step in range(num_repetitions):
@@ -279,7 +279,7 @@ def log_validation(
                     .to(accelerator.device),
                     full_field_mean_tensor,
                     full_field_std_tensor,
-                )
+                ).cpu()
 
                 if eval_ms:
                     ms_sample_latents[ensemble_idx] = latent_inv_transform_func(
@@ -295,39 +295,37 @@ def log_validation(
                         .to(accelerator.device),
                         full_field_mean_tensor,
                         full_field_std_tensor,
-                    )
+                    ).cpu()
 
+        ref_tensor_cpu = ref_tensor.cpu()
+        lat_weight_cpu = lat_weight.cpu()
         edm_single_squared_error = (
-            (edm_decoded_tensor - ref_tensor.unsqueeze(0)) ** 2
-        ) * lat_weight.view(1, 1, 1, -1, 1)  # (ensemble_size, C, T, H, W)
+            (edm_decoded_tensor - ref_tensor_cpu.unsqueeze(0)) ** 2
+        ) * lat_weight_cpu.view(1, 1, 1, -1, 1)  # (ensemble_size, C, T, H, W)
         edm_ens_squared_error = (
-            (edm_decoded_tensor.mean(dim=0) - ref_tensor) ** 2
-        ) * lat_weight.view(1, 1, -1, 1)  # (C, T, H, W)
-        edm_single_mse[timestamp_idx] = edm_single_squared_error.mean(dim=(0, 3, 4)).to(
-            "cpu"
-        )  # (C, T)
-        edm_ens_mse[timestamp_idx] = edm_ens_squared_error.mean(dim=(2, 3)).to(
-            "cpu"
-        )  # (C, T)
+            (edm_decoded_tensor.mean(dim=0) - ref_tensor_cpu) ** 2
+        ) * lat_weight_cpu.view(1, 1, -1, 1)  # (C, T, H, W)
+        edm_single_mse[timestamp_idx] = edm_single_squared_error.mean(dim=(0, 3, 4))  # (C, T)
+        edm_ens_mse[timestamp_idx] = edm_ens_squared_error.mean(dim=(2, 3))  # (C, T)
 
         if eval_ms:
             ms_single_squared_error = (
-                (ms_decoded_tensor - ref_tensor.unsqueeze(0)) ** 2
-            ) * lat_weight.view(1, 1, 1, -1, 1)
+                (ms_decoded_tensor - ref_tensor_cpu.unsqueeze(0)) ** 2
+            ) * lat_weight_cpu.view(1, 1, 1, -1, 1)
             ms_ens_squared_error = (
-                (ms_decoded_tensor.mean(dim=0) - ref_tensor) ** 2
-            ) * lat_weight.view(1, 1, -1, 1)
+                (ms_decoded_tensor.mean(dim=0) - ref_tensor_cpu) ** 2
+            ) * lat_weight_cpu.view(1, 1, -1, 1)
             ms_single_mse[timestamp_idx] = ms_single_squared_error.mean(
                 dim=(0, 3, 4)
-            ).to("cpu")
-            ms_ens_mse[timestamp_idx] = ms_ens_squared_error.mean(dim=(2, 3)).to("cpu")
+            )
+            ms_ens_mse[timestamp_idx] = ms_ens_squared_error.mean(dim=(2, 3))
 
         if eval_crps:
             tmp_edm_crps = get_crps(
-                edm_decoded_tensor, ref_tensor, ensemble_dim=0
+                edm_decoded_tensor, ref_tensor_cpu, ensemble_dim=0
             )  # (C, T, H, W)
             edm_crps[timestamp_idx] = (
-                (tmp_edm_crps * lat_weight.view(1, 1, -1, 1)).mean(dim=(2, 3)).to("cpu")
+                (tmp_edm_crps * lat_weight_cpu.view(1, 1, -1, 1)).mean(dim=(2, 3))
             )  # (C, T)
             crps_col_names = [
                 "lead time",
@@ -822,12 +820,18 @@ def main(args):
 
     # Move terrain data to device
     if terrain_encoder is not None:
-        terrain_encoder = terrain_encoder.to(accelerator.device)
         static_terrain_input = static_terrain_input.to(accelerator.device)
 
-    ar_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        ar_model, optimizer, train_dataloader, lr_scheduler
-    )
+    if terrain_encoder is not None:
+        ar_model, terrain_encoder, optimizer, train_dataloader, lr_scheduler = (
+            accelerator.prepare(
+                ar_model, terrain_encoder, optimizer, train_dataloader, lr_scheduler
+            )
+        )
+    else:
+        ar_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            ar_model, optimizer, train_dataloader, lr_scheduler
+        )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = (
@@ -970,7 +974,8 @@ def main(args):
         ar_model.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(ar_model):
+            _accumulate_models = [ar_model, terrain_encoder] if terrain_encoder is not None else [ar_model]
+            with accelerator.accumulate(*_accumulate_models):
                 # initial_profile: (B, C, T, H, W), clean_images: (B, C, T, H, W), timestamps: (B,)
                 initial_profile, clean_images, timestamps = batch
                 noise = torch.randn(clean_images.shape, device=clean_images.device)
@@ -1204,6 +1209,8 @@ def main(args):
 
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(ar_model.parameters(), 1.0)
+                    if terrain_encoder is not None:
+                        accelerator.clip_grad_norm_(terrain_encoder.parameters(), 1.0)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
