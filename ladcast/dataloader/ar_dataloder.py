@@ -23,7 +23,7 @@ def prepare_ar_dataloader(
     start_date: str,
     end_date: str,
     xr_engine: Optional[str] = "zarr",
-    var_name: str = "latents",
+    var_name: str = "latent",
     transform: callable = None,
     transform_args: dict = None,
     input_seq_len: int = 1,
@@ -44,11 +44,81 @@ def prepare_ar_dataloader(
 ):
     xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks="auto")
     xarr = xarr.sel(time=slice(start_date, end_date))
-    xarr = xarr.transpose("C", "time", "H", "W")
+    var_name = var_name.strip()
+    if var_name not in xarr:
+        available_vars = list(xarr.data_vars)
+        alias_priority = [var_name, var_name.lower(), var_name.lower().rstrip("s")]
+        explicit_aliases = {
+            "latents": "latent",
+            "latent": "latents",
+        }
+        alias_priority.extend(explicit_aliases.get(name, "") for name in alias_priority)
+        alias_priority = [name for name in alias_priority if name]
+        matched = next((name for name in alias_priority if name in available_vars), None)
+        if matched is not None:
+            print(
+                f"[prepare_ar_dataloader] var_name '{var_name}' not found, "
+                f"auto-using alias '{matched}'."
+            )
+            var_name = matched
+        else:
+            normalized_target = var_name.lower().rstrip("s")
+            fallback_candidates = [
+                name
+                for name in available_vars
+                if name.lower().rstrip("s") == normalized_target
+            ]
+            if len(fallback_candidates) == 1:
+                matched = fallback_candidates[0]
+                print(
+                    f"[prepare_ar_dataloader] var_name '{var_name}' not found, "
+                    f"auto-using closest match '{matched}'."
+                )
+                var_name = matched
+            else:
+                hint = (
+                    "This dataset does not contain the requested variable name exactly. "
+                    "Check singular/plural naming (e.g. 'latent' vs 'latents'), "
+                    "or set train_dataloader.var_name to one of the available vars."
+                )
+                raise KeyError(
+                    f"Variable '{var_name}' not found in dataset. "
+                    f"Available vars: {available_vars}. {hint}"
+                )
+
+    data = xarr[var_name]
+    dim_alias = {
+        "C": ("C", "channel", "level", "var"),
+        "H": ("H", "height", "lat", "latitude"),
+        "W": ("W", "width", "lon", "longitude"),
+    }
+
+    rename_map = {}
+    for target_dim, candidates in dim_alias.items():
+        if target_dim in data.dims:
+            continue
+        matched_dim = next((name for name in candidates if name in data.dims), None)
+        if matched_dim is not None and matched_dim != target_dim:
+            rename_map[matched_dim] = target_dim
+
+    if rename_map:
+        data = data.rename(rename_map)
+
+    if "C" not in data.dims and all(dim in data.dims for dim in ("time", "H", "W")):
+        data = data.expand_dims("C")
+
+    missing_dims = [dim for dim in ("C", "time", "H", "W") if dim not in data.dims]
+    if missing_dims:
+        raise ValueError(
+            f"Variable '{var_name}' missing required dimensions {missing_dims}. "
+            f"Current dims: {data.dims}"
+        )
+
+    data = data.transpose("C", "time", "H", "W")
     # xarr = xarr.chunk(chunks={"time": 1})
     if not profiling:
         tmp_dataset = XarrayDataset3D(
-            data=xarr[var_name],
+            data=data,
             transform=transform,
             transform_args=transform_args,
             input_seq_len=input_seq_len,

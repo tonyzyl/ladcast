@@ -71,7 +71,7 @@ lr_scheduler:
 
 # --- Train Dataloader ---
 train_dataloader:
-  ds_path: "/home/limaocheng/data/ERA5_ladcast_routeB_1979_2024.zarr"   # <-- CHANGE THIS
+  ds_path: "/home/limaocheng/ladcast/data/routeB_latent_train.zarr"   # <-- CHANGE THIS
   start_date: "1979-01-01"
   end_date: "2017-12-31"
   var_name: "latents"
