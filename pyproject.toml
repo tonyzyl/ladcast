@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    'torch==2.4.1',
+    'torch>=2.7.0,<2.8',
     'torchvision',
     'accelerate==1.6.0',
     'diffusers[torch]==0.32.1',
