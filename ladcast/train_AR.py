@@ -719,6 +719,16 @@ def main(args):
         general_config.seed + accelerator.process_index
     )
 
+    # Safety check: xarray/zarr + num_workers > 0 causes deadlocks
+    _nw = train_dataloader_config.get("num_workers", 0)
+    _lim = train_dataloader_config.get("load_in_memory", False)
+    if _nw > 0 and not _lim:
+        logger.warning(
+            "⚠️  num_workers > 0 with xarray lazy loading (load_in_memory=False). "
+            "zarr file handles are NOT fork-safe and WILL deadlock after many iterations. "
+            "Set load_in_memory=true or num_workers=0 in your config."
+        )
+
     with accelerator.main_process_first():
         # https://github.com/huggingface/accelerate/issues/503
         # https://discuss.huggingface.co/t/shared-memory-in-accelerate/28619

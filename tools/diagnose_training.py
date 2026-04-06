@@ -71,6 +71,7 @@ def check_dataloader(config_path, n_batches=200):
     print(f"TEST 2: DataLoader Stress Test ({n_batches} batches)")
     print("=" * 60)
     import json
+    import signal as _signal
     from omegaconf import OmegaConf
     from ladcast.dataloader.ar_dataloder import prepare_ar_dataloader
 
@@ -91,6 +92,17 @@ def check_dataloader(config_path, n_batches=200):
         print("     xarray/zarr file handles are NOT fork-safe. This is a known cause of")
         print("     deadlocks and silent crashes after many iterations.")
         print("     Fix: Set load_in_memory=true OR num_workers=0")
+        print()
+        print("  ✗ FAIL: Skipping DataLoader iteration test (would deadlock).")
+        print("     This is almost certainly the cause of your training hang.")
+        print()
+        print("     Quick fix options:")
+        print("       Option A (recommended if RAM > 50GB):")
+        print("         load_in_memory: true")
+        print("       Option B:")
+        print("         num_workers: 0")
+        print("         persistent_workers: false")
+        return False
 
     # Add transform_args if missing
     latent_norm_path = "ladcast/static/ERA5_latent_normal_1979_2017_lat84.json"
