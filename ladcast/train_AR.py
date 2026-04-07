@@ -743,7 +743,7 @@ def main(args):
     )
 
     val_dataset = xr.open_dataset(
-        train_dataloader_config.ds_path, engine="zarr", chunks="auto"
+        train_dataloader_config.ds_path, engine="zarr", chunks=None
     )
     val_dataset = _normalize_zarr_dataset(val_dataset)
     val_timerange = pd.date_range(start="2017-12-31", end="2019-01-10", freq="6h")

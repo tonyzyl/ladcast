@@ -58,7 +58,7 @@ def prepare_ar_dataloader(
     profiling: Optional[bool] = False,
     load_in_memory: Optional[bool] = False,
 ):
-    xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks="auto")
+    xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks=None)
     xarr = _normalize_zarr_dataset(xarr)
     xarr = xarr.sel(time=slice(start_date, end_date))
     var_name = var_name.strip()
