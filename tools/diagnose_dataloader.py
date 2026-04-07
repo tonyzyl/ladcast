@@ -73,6 +73,9 @@ def main():
     print(f"  timeout:    {args.timeout}s per step")
     print()
 
+    # Import normalize helper
+    from ladcast.dataloader.ar_dataloder import _normalize_zarr_dataset
+
     # Step 0: Check path exists
     print("Step 0: Check dataset path")
     if os.path.exists(ds_path):
@@ -88,29 +91,30 @@ def main():
         print("  Check your ds_path in the config!")
         return
 
-    # Step 1: xr.open_dataset without dask
-    print("\nStep 1: Open dataset WITHOUT dask (chunks=None)")
+    # Step 1: xr.open_dataset without dask + normalize names
+    print("\nStep 1: Open dataset WITHOUT dask (chunks=None) + normalize names")
     import xarray as xr
     ds_nodask, _ = timed("open_dataset(chunks=None)",
-        lambda: xr.open_dataset(ds_path, engine=xr_engine, chunks=None),
+        lambda: _normalize_zarr_dataset(xr.open_dataset(ds_path, engine=xr_engine, chunks=None)),
         timeout_sec=args.timeout)
     if ds_nodask is not None:
         print(f"    Variables: {list(ds_nodask.data_vars)}")
-        print(f"    Dims: {dict(ds_nodask.dims)}")
-        if var_name in ds_nodask:
-            v = ds_nodask[var_name]
-            print(f"    '{var_name}' shape: {v.shape}, dtype: {v.dtype}")
+        print(f"    Dims: {dict(ds_nodask.sizes)}")
+        # After normalize, var_name should be "latents"
+        _actual_var = "latents" if "latents" in ds_nodask else var_name
+        if _actual_var in ds_nodask:
+            v = ds_nodask[_actual_var]
+            print(f"    '{_actual_var}' shape: {v.shape}, dtype: {v.dtype}")
             nbytes = v.nbytes
-            print(f"    '{var_name}' size: {nbytes / 1024**3:.2f} GB")
+            print(f"    '{_actual_var}' size: {nbytes / 1024**3:.2f} GB")
         else:
-            print(f"    ✗ Variable '{var_name}' not found!")
-            print(f"    Available: {list(ds_nodask.data_vars)}")
+            print(f"    ✗ Variable not found! Available: {list(ds_nodask.data_vars)}")
         ds_nodask.close()
 
-    # Step 2: xr.open_dataset WITH dask (chunks="auto")
-    print("\nStep 2: Open dataset WITH dask (chunks='auto')")
+    # Step 2: xr.open_dataset WITH dask (chunks="auto") + normalize
+    print("\nStep 2: Open dataset WITH dask (chunks='auto') + normalize")
     ds_dask, _ = timed("open_dataset(chunks='auto')",
-        lambda: xr.open_dataset(ds_path, engine=xr_engine, chunks="auto"),
+        lambda: _normalize_zarr_dataset(xr.open_dataset(ds_path, engine=xr_engine, chunks="auto")),
         timeout_sec=args.timeout)
 
     if ds_dask is None:
@@ -141,7 +145,7 @@ def main():
     # Step 5: Access .shape
     print("\nStep 5: Access data shape")
     def get_shape():
-        da = ds_t[var_name]
+        da = ds_t["latents"]
         return da.shape
     shape, _ = timed("data.shape", get_shape, timeout_sec=args.timeout)
     if shape is not None:
@@ -150,14 +154,14 @@ def main():
     # Step 6: isel (like XarrayDataset3D.__init__)
     print("\nStep 6: isel (time slicing)")
     def do_isel():
-        da = ds_t[var_name]
+        da = ds_t["latents"]
         return da.isel(time=slice(0, None, 1))
     da_isel, _ = timed("isel(time=slice(0,None,1))", do_isel, timeout_sec=args.timeout)
 
     # Step 7: Actually read one sample (the critical test)
     print("\nStep 7: Read ONE sample (.to_numpy())")
     def read_one():
-        da = ds_t[var_name]
+        da = ds_t["latents"]
         sample = da[:, 0:2]  # (C, 2, H, W)
         return sample.to_numpy()
     arr, elapsed = timed("data[:, 0:2].to_numpy()", read_one, timeout_sec=args.timeout)
@@ -170,7 +174,7 @@ def main():
     # Step 8: Read 10 samples in sequence
     print("\nStep 8: Read 10 sequential samples")
     def read_ten():
-        da = ds_t[var_name]
+        da = ds_t["latents"]
         results = []
         for i in range(10):
             s = da[:, i:i+2].to_numpy()
@@ -185,17 +189,17 @@ def main():
     import dask
     def read_sync():
         with dask.config.set(scheduler='synchronous'):
-            da = ds_t[var_name]
+            da = ds_t["latents"]
             return da[:, 0:2].to_numpy()
     arr2, _ = timed("synchronous scheduler", read_sync, timeout_sec=args.timeout)
 
     # Step 10: Read WITHOUT dask at all
     print("\nStep 10: Read WITHOUT dask (chunks=None)")
     def read_nodask():
-        ds2 = xr.open_dataset(ds_path, engine=xr_engine, chunks=None)
+        ds2 = _normalize_zarr_dataset(xr.open_dataset(ds_path, engine=xr_engine, chunks=None))
         ds2 = ds2.sel(time=slice(start_date, end_date))
         ds2 = ds2.transpose("C", "time", "H", "W")
-        da = ds2[var_name]
+        da = ds2["latents"]
         return da[:, 0:2].values
     arr3, elapsed_nodask = timed("no-dask read", read_nodask, timeout_sec=args.timeout)
 
