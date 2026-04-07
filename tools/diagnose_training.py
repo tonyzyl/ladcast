@@ -91,18 +91,43 @@ def check_dataloader(config_path, n_batches=200):
         print("  ⚠️  WARNING: num_workers > 0 with xarray lazy loading (load_in_memory=False)")
         print("     xarray/zarr file handles are NOT fork-safe. This is a known cause of")
         print("     deadlocks and silent crashes after many iterations.")
-        print("     Fix: Set load_in_memory=true OR num_workers=0")
         print()
-        print("  ✗ FAIL: Skipping DataLoader iteration test (would deadlock).")
-        print("     This is almost certainly the cause of your training hang.")
+        print("  ✗ FAIL: This is the cause of your training hang.")
         print()
-        print("     Quick fix options:")
-        print("       Option A (recommended if RAM > 50GB):")
-        print("         load_in_memory: true")
-        print("       Option B:")
-        print("         num_workers: 0")
-        print("         persistent_workers: false")
-        return False
+        print("     Fix in your config.yaml:")
+        print("       num_workers: 0")
+        print("       persistent_workers: false")
+        print()
+        print("  Re-testing with num_workers=0 to verify DataLoader works...")
+        train_dl_config["num_workers"] = 0
+        train_dl_config["persistent_workers"] = False
+        nw = 0  # continue with safe settings
+
+    # Check dataset size before attempting load_in_memory
+    if load_in_mem:
+        print("  load_in_memory=true: checking dataset size first...")
+        try:
+            import xarray as xr
+            ds = xr.open_dataset(
+                train_dl_config.get("ds_path", ""),
+                engine=train_dl_config.get("xr_engine", "zarr"),
+                chunks="auto",
+            )
+            var_name = train_dl_config.get("var_name", "latents")
+            if var_name in ds:
+                nbytes = ds[var_name].nbytes
+                print(f"  Dataset '{var_name}' size: {fmt_bytes(nbytes)}")
+                avail = psutil.virtual_memory().available
+                print(f"  Available RAM: {fmt_bytes(avail)}")
+                if nbytes > avail * 0.8:
+                    print(f"  ⚠️  WARNING: Dataset ({fmt_bytes(nbytes)}) > 80% of available RAM ({fmt_bytes(avail)})")
+                    print("     load_in_memory=true will OOM! Use num_workers=0 instead.")
+                    return False
+                else:
+                    print(f"  ✓ Dataset fits in RAM ({fmt_bytes(nbytes)} < {fmt_bytes(avail)})")
+            ds.close()
+        except Exception as e:
+            print(f"  Could not check dataset size: {e}")
 
     # Add transform_args if missing
     latent_norm_path = "ladcast/static/ERA5_latent_normal_1979_2017_lat84.json"
