@@ -74,7 +74,7 @@ train_dataloader:
   ds_path: "/home/limaocheng/ladcast/data/routeB_latent_train.zarr"   # <-- CHANGE THIS
   start_date: "1979-01-01"
   end_date: "2017-12-31"
-  var_name: "latents"
+  var_name: "latent"
   xr_engine: "zarr"
   batch_size: 2                  # per-GPU batch size
   input_seq_len: 1               # number of conditioning frames
