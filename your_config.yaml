@@ -80,13 +80,13 @@ train_dataloader:
   input_seq_len: 1               # number of conditioning frames
   return_seq_len: 1              # number of frames to predict
   shuffle: true
-  num_workers: 4
+  num_workers: 0
   sampling_interval: 1
   interval_between_pred: 1
   truncate_first: 0
   data_augmentation: false
   prefetch_factor: 2
-  persistent_workers: true
+  persistent_workers: false
   pin_memory: true
   load_in_memory: false
   transform: "normalize"         # or null
