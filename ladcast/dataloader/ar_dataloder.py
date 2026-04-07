@@ -18,6 +18,22 @@ def convert_datetime_to_int(dt: np.timedelta64) -> int:
     return int(py_dt.strftime("%Y%m%d%H"))
 
 
+def _normalize_zarr_dataset(xarr: xr.Dataset) -> xr.Dataset:
+    """Rename dimensions/variables to the canonical names expected by LaDCast:
+    dims:  (C, time, H, W)
+    var:   latents
+    """
+    # Dimension rename: channel→C, lat→H, lon→W
+    _dim_map = {"channel": "C", "lat": "H", "lon": "W"}
+    _rename = {k: v for k, v in _dim_map.items() if k in xarr.dims}
+    # Variable rename: latent→latents
+    if "latent" in xarr.data_vars and "latents" not in xarr.data_vars:
+        _rename["latent"] = "latents"
+    if _rename:
+        xarr = xarr.rename(_rename)
+    return xarr
+
+
 def prepare_ar_dataloader(
     ds_path: str,  # path to zarr file
     start_date: str,
@@ -43,6 +59,7 @@ def prepare_ar_dataloader(
     load_in_memory: Optional[bool] = False,
 ):
     xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks="auto")
+    xarr = _normalize_zarr_dataset(xarr)
     xarr = xarr.sel(time=slice(start_date, end_date))
     var_name = var_name.strip()
     if var_name not in xarr:

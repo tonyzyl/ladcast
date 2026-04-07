@@ -29,6 +29,7 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 
 from ladcast.dataloader.ar_dataloder import (
+    _normalize_zarr_dataset,
     convert_datetime_to_int,
     prepare_ar_dataloader,
 )
@@ -744,6 +745,7 @@ def main(args):
     val_dataset = xr.open_dataset(
         train_dataloader_config.ds_path, engine="zarr", chunks="auto"
     )
+    val_dataset = _normalize_zarr_dataset(val_dataset)
     val_timerange = pd.date_range(start="2017-12-31", end="2019-01-10", freq="6h")
     # val_timerange = pd.date_range(start='2018-12-31', end='2019-03-31', freq='6h') # allowing a 10-day window for covering the pred window
     val_dataset = val_dataset.sel(time=val_timerange)
