@@ -13,8 +13,8 @@
 
 # --- AR Model (LaDCastTransformer3DModel) ---
 ar_model:
-  in_channels: 32                # DC-AE latent channels (84 physical -> 32 latent)
-  out_channels: 32
+  in_channels: 8                # DC-AE latent channels (84 physical -> 32 latent)
+  out_channels: 8
   num_attention_heads: 24
   attention_head_dim: 128        # inner_dim = 24 * 128 = 3072
   num_layers: 20                 # dual-stream blocks
@@ -29,12 +29,12 @@ ar_model:
   rope_spatial_grid_start_pos: 0
   rope_spatial_grid_end_pos: null
   spatial_deg2rad: false
-  conditioning_tensor_in_channels: 32   # same as in_channels for AR conditioning
+  conditioning_tensor_in_channels: 8   # same as in_channels for AR conditioning
   conditioning_tensor_rope_axes_dim: [16, 56, 56]
   incl_time_elapsed: true        # include timestamp embeddings
   nope: false
   scale_attn_by_lat: false
-  terrain_channels: 32           # must match --terrain_out_channels
+  terrain_channels: 8           # must match --terrain_out_channels
 
 # --- Noise Scheduler (EDM-style) ---
 noise_scheduler:
@@ -74,7 +74,7 @@ train_dataloader:
   ds_path: "/home/limaocheng/ladcast/data/routeB_latent_train.zarr"   # <-- CHANGE THIS
   start_date: "1979-01-01"
   end_date: "2017-12-31"
-  var_name: "latent"
+  var_name: "latents"
   xr_engine: "zarr"
   batch_size: 2                  # per-GPU batch size
   input_seq_len: 1               # number of conditioning frames

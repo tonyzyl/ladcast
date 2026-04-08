@@ -146,6 +146,9 @@ def prepare_ar_dataloader(
             data_augmentation=data_augmentation,
             load_in_memory=load_in_memory,
         )
+    if num_workers == 0:
+        prefetch_factor = None
+        persistent_workers = False
 
     return DataLoader(
         tmp_dataset,
