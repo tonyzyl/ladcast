@@ -566,14 +566,21 @@ def main(args):
     terrain_encoder = None
     static_terrain_input = None
     if args.use_terrain:
+        # Infer latent spatial resolution from data
+        _tmp_ds = xr.open_dataset(train_dataloader_config.ds_path, engine="zarr", chunks=None)
+        _tmp_ds = _normalize_zarr_dataset(_tmp_ds)
+        _latent_nlat = _tmp_ds.sizes.get("H", _tmp_ds.sizes.get("lat", 15))
+        _latent_nlon = _tmp_ds.sizes.get("W", _tmp_ds.sizes.get("lon", 30))
+        _tmp_ds.close()
+
         terrain_encoder = TerrainEncoder(
             in_channels=5,  # 1 LSM + 4 orography
             embed_dim=args.terrain_embed_dim,
             out_channels=args.terrain_out_channels,
             phys_nlat=120,   # after south pole crop
             phys_nlon=240,
-            latent_nlat=15,
-            latent_nlon=30,
+            latent_nlat=_latent_nlat,
+            latent_nlon=_latent_nlon,
             use_sht=args.terrain_use_sht,
         )
         terrain_encoder.requires_grad_(True)
