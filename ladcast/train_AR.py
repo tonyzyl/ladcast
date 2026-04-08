@@ -737,6 +737,11 @@ def main(args):
             "Set load_in_memory=true or num_workers=0 in your config."
         )
 
+    # Sanitize DataLoader options: prefetch_factor requires num_workers > 0
+    if _nw == 0:
+        train_dataloader_config["prefetch_factor"] = None
+        train_dataloader_config["persistent_workers"] = False
+
     with accelerator.main_process_first():
         # https://github.com/huggingface/accelerate/issues/503
         # https://discuss.huggingface.co/t/shared-memory-in-accelerate/28619
