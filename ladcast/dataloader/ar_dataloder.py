@@ -77,6 +77,11 @@ def prepare_ar_dataloader(
             load_in_memory=load_in_memory,
         )
 
+    # prefetch_factor and persistent_workers require num_workers > 0
+    if num_workers == 0:
+        prefetch_factor = None
+        persistent_workers = False
+
     return DataLoader(
         tmp_dataset,
         batch_size=batch_size,
