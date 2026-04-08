@@ -24,7 +24,8 @@ class AutoRegressive2DPipeline(DiffusionPipeline):
     model_cpu_offload_seq = "unet"
 
     def __init__(
-        self, ar_model, scheduler, scheduler_step_kwargs: Optional[dict] = None
+        self, ar_model, scheduler, scheduler_step_kwargs: Optional[dict] = None,
+        model_kwargs: Optional[dict] = None,
     ):
         super().__init__()
 
@@ -33,6 +34,7 @@ class AutoRegressive2DPipeline(DiffusionPipeline):
 
         self.register_modules(ar_model=ar_model, scheduler=scheduler)
         self.scheduler_step_kwargs = scheduler_step_kwargs or {}
+        self.model_kwargs = model_kwargs or {}
 
     # copy of function call but return the trajectory
     def return_trajectory(
@@ -91,7 +93,8 @@ class AutoRegressive2DPipeline(DiffusionPipeline):
                 # x_in = torch.cat((x_in, concat_mask), dim=1)
                 t = t.expand(batch_size).to(self._execution_device)
                 model_output = self.ar_model(
-                    x_in, t, known_latents, time_elapsed=timestamps, return_dict=False
+                    x_in, t, known_latents, time_elapsed=timestamps,
+                    return_dict=False, **self.model_kwargs,
                 )[0]
             else:
                 raise NotImplementedError("Only EDM style is supported for now")

@@ -10,3 +10,9 @@ wheels/
 .ladcast_venv
 
 wandb/
+
+data/
+ladcast/configs/
+checkpoints/
+static/
+
