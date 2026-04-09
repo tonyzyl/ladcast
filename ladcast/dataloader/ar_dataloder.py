@@ -18,6 +18,22 @@ def convert_datetime_to_int(dt: np.timedelta64) -> int:
     return int(py_dt.strftime("%Y%m%d%H"))
 
 
+def _normalize_zarr_dataset(xarr: xr.Dataset) -> xr.Dataset:
+    """Rename dimensions/variables to the canonical names expected by LaDCast:
+    dims:  (C, time, H, W)
+    var:   latents
+    """
+    # Dimension rename: channel→C, lat→H, lon→W
+    _dim_map = {"channel": "C", "lat": "H", "lon": "W"}
+    _rename = {k: v for k, v in _dim_map.items() if k in xarr.dims}
+    # Variable rename: latent→latents
+    if "latent" in xarr.data_vars and "latents" not in xarr.data_vars:
+        _rename["latent"] = "latents"
+    if _rename:
+        xarr = xarr.rename(_rename)
+    return xarr
+
+
 def prepare_ar_dataloader(
     ds_path: str,  # path to zarr file
     start_date: str,
@@ -42,7 +58,8 @@ def prepare_ar_dataloader(
     profiling: Optional[bool] = False,
     load_in_memory: Optional[bool] = False,
 ):
-    xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks="auto")
+    xarr = xr.open_dataset(ds_path, engine=xr_engine, chunks=None)
+    xarr = _normalize_zarr_dataset(xarr)
     xarr = xarr.sel(time=slice(start_date, end_date))
     xarr = xarr.transpose("C", "time", "H", "W")
     # xarr = xarr.chunk(chunks={"time": 1})
@@ -59,6 +76,11 @@ def prepare_ar_dataloader(
             data_augmentation=data_augmentation,
             load_in_memory=load_in_memory,
         )
+
+    # prefetch_factor and persistent_workers require num_workers > 0
+    if num_workers == 0:
+        prefetch_factor = None
+        persistent_workers = False
 
     return DataLoader(
         tmp_dataset,

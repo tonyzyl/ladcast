@@ -25,6 +25,7 @@ def edm_AR_sampler(
     # return_trajectory=False,
     generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
     device="cpu",
+    model_kwargs: Optional[dict] = None,
 ):
     """
     known_latents: torch.Tensor, shape (B, C, T, H, W) or (B, C, H, W), initial solution profile, if
@@ -58,6 +59,7 @@ def edm_AR_sampler(
     t_steps = noise_scheduler.sigmas.to(device)
 
     x_next = latents.to(torch.float64) * t_steps[0]
+    _extra_kwargs = model_kwargs or {}
 
     # if return_trajectory:
     #    whole_trajectory = torch.zeros((num_inference_steps, *x_next.shape), dtype=torch.float64)
@@ -87,6 +89,7 @@ def edm_AR_sampler(
             c_noise.reshape(-1).to(torch.float32),
             known_latents,
             time_elapsed=timestamps,
+            **_extra_kwargs,
         ).sample.to(torch.float64)
         denoised = noise_scheduler.precondition_outputs(x_hat, denoised, t_hat)
 
@@ -106,6 +109,7 @@ def edm_AR_sampler(
                 c_noise.reshape(-1).to(torch.float32),
                 known_latents,
                 time_elapsed=timestamps,
+                **_extra_kwargs,
             ).sample.to(torch.float64)
             denoised = noise_scheduler.precondition_outputs(x_next, denoised, t_next)
 
