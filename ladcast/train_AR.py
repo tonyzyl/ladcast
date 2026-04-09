@@ -746,12 +746,25 @@ def main(args):
         train_dataloader_config.ds_path, engine="zarr", chunks=None
     )
     val_dataset = _normalize_zarr_dataset(val_dataset)
-    val_timerange = pd.date_range(start="2017-12-31", end="2019-01-10", freq="6h")
-    # val_timerange = pd.date_range(start='2018-12-31', end='2019-03-31', freq='6h') # allowing a 10-day window for covering the pred window
+    # Derive validation range from actual data: use last 10% of timestamps
+    _all_times = pd.DatetimeIndex(val_dataset.time.values)
+    _split_idx = int(len(_all_times) * 0.9)
+    _val_start = _all_times[_split_idx]
+    _val_end = _all_times[-1]
+    _freq = pd.infer_freq(_all_times[:100]) or "6h"
+    logger.info(f"Validation time range: {_val_start} → {_val_end}, freq={_freq}")
+    val_timerange = pd.date_range(start=_val_start, end=_val_end, freq=_freq)
+    # Keep only timestamps that actually exist in the dataset
+    val_timerange = val_timerange.intersection(_all_times)
     val_dataset = val_dataset.sel(time=val_timerange)
     val_timerange4pred = list(
-        filter_time_range(val_timerange, num_samples_per_month=2, enforce_year="2018")
+        filter_time_range(val_timerange, num_samples_per_month=2)
     )
+    if not val_timerange4pred:
+        # Fallback: just use a few evenly spaced timestamps
+        _step = max(1, len(val_timerange) // 10)
+        val_timerange4pred = [val_timerange[i] for i in range(0, len(val_timerange), _step)][:10]
+    logger.info(f"Validation prediction timestamps: {len(val_timerange4pred)} samples")
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",

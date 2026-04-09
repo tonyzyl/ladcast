@@ -15,8 +15,8 @@
 ar_model:
   in_channels: 8                # DC-AE latent channels (84 physical -> 32 latent)
   out_channels: 8
-  num_attention_heads: 24
-  attention_head_dim: 128        # inner_dim = 24 * 128 = 3072
+  num_attention_heads: 8
+  attention_head_dim: 64        # inner_dim = 24 * 128 = 3072
   num_layers: 20                 # dual-stream blocks
   num_single_layers: 40          # single-stream blocks
   num_refiner_layers: 2          # context refiner layers
@@ -25,12 +25,12 @@ ar_model:
   patch_size_t: 1                # temporal patch size
   qk_norm: "rms_norm"
   rope_theta: 256.0
-  rope_axes_dim: [16, 56, 56]   # (T, H, W) RoPE dimensions
+  rope_axes_dim: [16, 24, 24]   # (T, H, W) RoPE dimensions
   rope_spatial_grid_start_pos: 0
   rope_spatial_grid_end_pos: null
   spatial_deg2rad: false
   conditioning_tensor_in_channels: 8   # same as in_channels for AR conditioning
-  conditioning_tensor_rope_axes_dim: [16, 56, 56]
+  conditioning_tensor_rope_axes_dim: [16, 24, 24]
   incl_time_elapsed: true        # include timestamp embeddings
   nope: false
   scale_attn_by_lat: false
@@ -99,7 +99,7 @@ ema:
   ema_inv_gamma: 1.0
   ema_power: 0.6667
   foreach: false
-  offload_ema: false
+  offload_ema: true
 
 # --- General ---
 general:
