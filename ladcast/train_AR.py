@@ -525,6 +525,14 @@ def parse_args():
         default="ladcast/static/240x121_orography.pt",
         help="Path to orography tensor.",
     )
+    parser.add_argument(
+        "--skip_encdec",
+        action="store_true",
+        default=False,
+        help="Skip loading the encoder-decoder model (DC-AE). Use this when training "
+             "with custom latent data that is incompatible with the default DC-AE. "
+             "Validation will run in latent space only (no decode to physical space).",
+    )
 
     return parser.parse_args()
 
@@ -547,6 +555,9 @@ def main(args):
     lr_scheduler_config = config.pop("lr_scheduler", OmegaConf.create())
     train_dataloader_config = config.pop("train_dataloader", OmegaConf.create())
     ema_config = config.pop("ema", OmegaConf.create())
+    # Ensure offload_ema has a default (True saves GPU memory)
+    if "offload_ema" not in ema_config:
+        ema_config["offload_ema"] = True
     general_config = config.pop("general", OmegaConf.create())
 
     with open(args.latent_norm_json_path, "r") as f:
@@ -604,16 +615,20 @@ def main(args):
         )
 
     repo_name = args.hub_model_id
-    if args.encdec_cls == "dcae":
-        encdec_cls = AutoencoderDC
+    encdec_model = None
+    if not args.skip_encdec:
+        if args.encdec_cls == "dcae":
+            encdec_cls = AutoencoderDC
+        else:
+            raise NotImplementedError(
+                f"Unknown encoder-decoder model class: {args.encdec_cls}"
+            )
+        encdec_model = encdec_cls.from_pretrained(
+            repo_name, subfolder=args.encdec_model
+        )  # set to eval by default
+        encdec_model.requires_grad_(False)
     else:
-        raise NotImplementedError(
-            f"Unknown encoder-decoder model class: {args.encdec_cls}"
-        )
-    encdec_model = encdec_cls.from_pretrained(
-        repo_name, subfolder=args.encdec_model
-    )  # set to eval by default
-    encdec_model.requires_grad_(False)
+        logger.info("--skip_encdec: DC-AE not loaded. Validation will run in latent space only.")
 
     logging_dir = Path(general_config.output_dir, general_config.logging_dir)
     accelerator_project_config = ProjectConfiguration(
@@ -628,13 +643,16 @@ def main(args):
 
     set_seed(general_config.seed)
 
-    with open(args.norm_json_path, "r") as f:
-        normalization_param_dict = json.load(f)
-        full_field_mean_tensor, full_field_std_tensor = precompute_mean_std(
-            normalization_param_dict, general_config.channel_names
-        )
-        full_field_mean_tensor = full_field_mean_tensor.to("cpu")
-        full_field_std_tensor = full_field_std_tensor.to("cpu")
+    full_field_mean_tensor = None
+    full_field_std_tensor = None
+    if not args.skip_encdec:
+        with open(args.norm_json_path, "r") as f:
+            normalization_param_dict = json.load(f)
+            full_field_mean_tensor, full_field_std_tensor = precompute_mean_std(
+                normalization_param_dict, general_config.channel_names
+            )
+            full_field_mean_tensor = full_field_mean_tensor.to("cpu")
+            full_field_std_tensor = full_field_std_tensor.to("cpu")
 
     # Create EMA for the model. Some examples:
     # https://github.com/huggingface/diffusers/blob/main/examples/text_to_image/train_text_to_image.py
@@ -752,29 +770,34 @@ def main(args):
         train_dataloader_config.return_seq_len / args.num_push_forward_steps
     )
 
-    val_dataset = xr.open_dataset(
-        train_dataloader_config.ds_path, engine="zarr", chunks=None
-    )
-    val_dataset = _normalize_zarr_dataset(val_dataset)
-    # Derive validation range from actual data: use last 10% of timestamps
-    _all_times = pd.DatetimeIndex(val_dataset.time.values)
-    _split_idx = int(len(_all_times) * 0.9)
-    _val_start = _all_times[_split_idx]
-    _val_end = _all_times[-1]
-    _freq = pd.infer_freq(_all_times[:100]) or "6h"
-    logger.info(f"Validation time range: {_val_start} → {_val_end}, freq={_freq}")
-    val_timerange = pd.date_range(start=_val_start, end=_val_end, freq=_freq)
-    # Keep only timestamps that actually exist in the dataset
-    val_timerange = val_timerange.intersection(_all_times)
-    val_dataset = val_dataset.sel(time=val_timerange)
-    val_timerange4pred = list(
-        filter_time_range(val_timerange, num_samples_per_month=2)
-    )
-    if not val_timerange4pred:
-        # Fallback: just use a few evenly spaced timestamps
-        _step = max(1, len(val_timerange) // 10)
-        val_timerange4pred = [val_timerange[i] for i in range(0, len(val_timerange), _step)][:10]
-    logger.info(f"Validation prediction timestamps: {len(val_timerange4pred)} samples")
+    val_dataset = None
+    val_timerange4pred = []
+    if not args.skip_encdec:
+        val_dataset = xr.open_dataset(
+            train_dataloader_config.ds_path, engine="zarr", chunks=None
+        )
+        val_dataset = _normalize_zarr_dataset(val_dataset)
+        # Derive validation range from actual data: use last 10% of timestamps
+        _all_times = pd.DatetimeIndex(val_dataset.time.values)
+        _split_idx = int(len(_all_times) * 0.9)
+        _val_start = _all_times[_split_idx]
+        _val_end = _all_times[-1]
+        _freq = pd.infer_freq(_all_times[:100]) or "6h"
+        logger.info(f"Validation time range: {_val_start} → {_val_end}, freq={_freq}")
+        val_timerange = pd.date_range(start=_val_start, end=_val_end, freq=_freq)
+        # Keep only timestamps that actually exist in the dataset
+        val_timerange = val_timerange.intersection(_all_times)
+        val_dataset = val_dataset.sel(time=val_timerange)
+        val_timerange4pred = list(
+            filter_time_range(val_timerange, num_samples_per_month=2)
+        )
+        if not val_timerange4pred:
+            # Fallback: just use a few evenly spaced timestamps
+            _step = max(1, len(val_timerange) // 10)
+            val_timerange4pred = [val_timerange[i] for i in range(0, len(val_timerange), _step)][:10]
+        logger.info(f"Validation prediction timestamps: {len(val_timerange4pred)} samples")
+    else:
+        logger.info("Skipping validation dataset setup (--skip_encdec)")
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -850,8 +873,9 @@ def main(args):
     if args.gradient_checkpointing:
         ar_model.enable_gradient_checkpointing()
 
-    # TODO: maybe only load vae when logging image
-    encdec_model = encdec_model.to(accelerator.device)
+    # Move DC-AE to device only if loaded
+    if encdec_model is not None:
+        encdec_model = encdec_model.to(accelerator.device)
 
     # Move terrain data to device
     if terrain_encoder is not None:
@@ -997,8 +1021,10 @@ def main(args):
     # Now you train the model
     accelerator.wait_for_everyone()
     if args.lat_weighted_loss:
+        # Derive latitude grid from actual data dimensions instead of hardcoding
+        _latent_H = train_dataloader.dataset.data.shape[2]  # H dimension
         loss_lat_weight = get_normalized_lat_weights_based_on_cos(
-            np.linspace(-83.25, 84.75, 15)
+            np.linspace(-90, 90, _latent_H)
         )  # (lat,)
         loss_lat_weight = torch.from_numpy(loss_lat_weight).to(
             accelerator.device
@@ -1326,48 +1352,53 @@ def main(args):
             (epoch + 1) % general_config.save_image_epochs == 0
             or epoch == general_config.num_train_epochs - 1
         ):
-            logger.info(f"Logging validation for epoch {epoch}")
-            if accelerator.is_main_process:
-                if ema_config.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_model.store(ar_model.parameters())
-                    ema_model.copy_to(ar_model.parameters())
-            accelerator.wait_for_everyone()
-            with accelerator.split_between_processes(
-                val_timerange4pred
-            ) as input_timestamp:
-                # print(f'process {accelerator.process_index} is processing {input_timestamp}')
-                # Pre-compute terrain features for validation
-                _val_terrain = None
-                if terrain_encoder is not None:
-                    terrain_encoder.eval()
-                    with torch.no_grad():
-                        _val_terrain = terrain_encoder(static_terrain_input)  # (1, C_t, 15, 30)
-                log_validation(
-                    "val",
-                    xr_dataset=val_dataset,
-                    config=general_config,
-                    ar_model=unwrap_model(ar_model),
-                    full_field_mean_tensor=full_field_mean_tensor,
-                    full_field_std_tensor=full_field_std_tensor,
-                    input_seq_len=train_dataloader_config.input_seq_len,
-                    return_seq_len=num_slice_per_push_forward,
-                    encdec_model=encdec_model,
-                    latent_transform_func=train_dataloader.dataset.transform,
-                    latent_inv_transform_func=train_dataloader.dataset.inv_transform,
-                    noise_scheduler_config=noise_scheduler_config,
-                    accelerator=accelerator,
-                    timestamp_list=input_timestamp,
-                    ensemble_size=10,
-                    num_inference_steps=20,
-                    eval_ms=False,
-                    terrain_features=_val_terrain,
+            if encdec_model is None:
+                logger.info(
+                    f"Epoch {epoch}: skipping physical-space validation (--skip_encdec). "
+                    f"Training loss: {train_loss:.6f}"
                 )
-            if accelerator.is_main_process:
-                if ema_config.use_ema:
-                    # Restore the UNet parameters.
-                    ema_model.restore(ar_model.parameters())
-            accelerator.wait_for_everyone()
+            else:
+                logger.info(f"Logging validation for epoch {epoch}")
+                if accelerator.is_main_process:
+                    if ema_config.use_ema:
+                        # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
+                        ema_model.store(ar_model.parameters())
+                        ema_model.copy_to(ar_model.parameters())
+                accelerator.wait_for_everyone()
+                with accelerator.split_between_processes(
+                    val_timerange4pred
+                ) as input_timestamp:
+                    # Pre-compute terrain features for validation
+                    _val_terrain = None
+                    if terrain_encoder is not None:
+                        terrain_encoder.eval()
+                        with torch.no_grad():
+                            _val_terrain = terrain_encoder(static_terrain_input)
+                    log_validation(
+                        "val",
+                        xr_dataset=val_dataset,
+                        config=general_config,
+                        ar_model=unwrap_model(ar_model),
+                        full_field_mean_tensor=full_field_mean_tensor,
+                        full_field_std_tensor=full_field_std_tensor,
+                        input_seq_len=train_dataloader_config.input_seq_len,
+                        return_seq_len=num_slice_per_push_forward,
+                        encdec_model=encdec_model,
+                        latent_transform_func=train_dataloader.dataset.transform,
+                        latent_inv_transform_func=train_dataloader.dataset.inv_transform,
+                        noise_scheduler_config=noise_scheduler_config,
+                        accelerator=accelerator,
+                        timestamp_list=input_timestamp,
+                        ensemble_size=10,
+                        num_inference_steps=20,
+                        eval_ms=False,
+                        terrain_features=_val_terrain,
+                    )
+                if accelerator.is_main_process:
+                    if ema_config.use_ema:
+                        # Restore the UNet parameters.
+                        ema_model.restore(ar_model.parameters())
+                accelerator.wait_for_everyone()
 
         if accelerator.is_main_process:
             if (
