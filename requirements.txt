@@ -1,3 +1,5 @@
+--index-url https://download.pytorch.org/whl/cu121
+--extra-index-url https://pypi.org/simple
 absl-py==2.4.0
 accelerate==1.6.0
 aiohappyeyeballs==2.6.1
