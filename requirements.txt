@@ -134,7 +134,7 @@ nvidia-nvtx-cu12==12.1.105
 oauthlib==3.3.1
 omegaconf==2.3.0
 overrides==7.7.0
-packaging @ file:///home/task_176104885106445/conda-bld/packaging_1761049078006/work
+packaging>=24,<26
 pandas==3.0.1
 pandocfilters==1.5.1
 parso==0.8.6
