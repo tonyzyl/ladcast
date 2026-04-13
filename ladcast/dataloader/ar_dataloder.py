@@ -146,6 +146,15 @@ def prepare_ar_dataloader(
             data_augmentation=data_augmentation,
             load_in_memory=load_in_memory,
         )
+    # Data has been materialized into numpy inside the Dataset.
+    # Close the zarr-backed xarray Dataset to release file handles and
+    # prevent the zarr store / xarray coordinate cache from lingering.
+    try:
+        xarr.close()
+    except Exception:
+        pass
+    del xarr, data
+
     if num_workers == 0:
         prefetch_factor = None
         persistent_workers = False
@@ -186,15 +195,19 @@ class XarrayDataset3D(Dataset):
         data_augmentation: Optional[bool] = False,
         load_in_memory: Optional[bool] = False,
     ):
-        self.data = data.isel(time=slice(truncate_first, None, sampling_interval))
+        _da = data.isel(time=slice(truncate_first, None, sampling_interval))
         # Always materialize to a contiguous numpy array so that __getitem__
         # indexes into plain ndarray instead of repeatedly slicing a lazy
         # xarray DataArray.  Repeated lazy slicing accumulates internal
         # xarray/zarr cache objects and is the primary source of the
         # memory leak that eventually triggers OOM / SIGKILL (exit 137).
         print("Materializing xarray DataArray to numpy array ...")
-        self._np_data = self.data.values  # (C, T, H, W)  — one-time load
-        self._time_values = self.data.time.values.copy()
+        self._np_data = _da.values  # (C, T, H, W)  — one-time load
+        self._time_values = _da.time.values.copy()
+        _data_shape = _da.shape
+        # Release the lazy xarray DataArray (and its zarr store reference)
+        # so that only the numpy copy remains in memory.
+        del _da
         print(
             f"Data materialized: shape={self._np_data.shape}, "
             f"dtype={self._np_data.dtype}, "
@@ -215,7 +228,7 @@ class XarrayDataset3D(Dataset):
             input_seq_len + return_seq_len - 1
         ) * interval_between_pred + 1
         if length is None:
-            self.length = self.data.shape[1] - self.full_seq_len - truncate_first + 1
+            self.length = _data_shape[1] - self.full_seq_len - truncate_first + 1
             print(
                 f"Length not provided, Calculated: {self.length}. Full seq len: {self.full_seq_len}"
             )
