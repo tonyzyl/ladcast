@@ -1,4 +1,5 @@
 import argparse
+import gc
 import json
 import logging
 import math
@@ -389,6 +390,7 @@ def log_validation(
                 tracker.log({"merged_RMSE": merged_table})
 
     del pipeline
+    gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
@@ -1338,6 +1340,11 @@ def main(args):
                     )
                     accelerator.save_state(save_path)
                     logger.info(f"Saved state to {save_path}")
+                    # Reclaim memory accumulated by stale Python objects
+                    # (xarray wrappers, zarr caches, wandb history, etc.)
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
 
             logs = {
                 "step_loss": loss.detach().item(),
@@ -1430,6 +1437,11 @@ def main(args):
                         ignore_patterns=["checkpoint_"],
                         token=args.hub_token if args.hub_token else None,
                     )
+
+        # End-of-epoch memory cleanup
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     accelerator.end_training()
 

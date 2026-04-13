@@ -186,12 +186,20 @@ class XarrayDataset3D(Dataset):
         data_augmentation: Optional[bool] = False,
         load_in_memory: Optional[bool] = False,
     ):
-        self.data = data[:, truncate_first:]
         self.data = data.isel(time=slice(truncate_first, None, sampling_interval))
-        if load_in_memory:
-            print("Load in memory is set to True, loading data...")
-            self.data = self.data.load()
-            print("Data loaded in memory")
+        # Always materialize to a contiguous numpy array so that __getitem__
+        # indexes into plain ndarray instead of repeatedly slicing a lazy
+        # xarray DataArray.  Repeated lazy slicing accumulates internal
+        # xarray/zarr cache objects and is the primary source of the
+        # memory leak that eventually triggers OOM / SIGKILL (exit 137).
+        print("Materializing xarray DataArray to numpy array ...")
+        self._np_data = self.data.values  # (C, T, H, W)  — one-time load
+        self._time_values = self.data.time.values.copy()
+        print(
+            f"Data materialized: shape={self._np_data.shape}, "
+            f"dtype={self._np_data.dtype}, "
+            f"size={self._np_data.nbytes / 1024**2:.1f} MB"
+        )
         self.transform = get_transform_3D(transform, transform_args)
         self.inv_transform = get_inv_transform_3D(transform, transform_args)
         self.transform_args = transform_args or {}
@@ -215,7 +223,7 @@ class XarrayDataset3D(Dataset):
             self.length = length - self.full_seq_len - truncate_first + 1
 
     def _preprocess_data(self, data):
-        data = torch.from_numpy(data.to_numpy()).float()
+        data = torch.from_numpy(data.copy()).float()
         return self.transform(data)
 
     def __len__(self):
@@ -225,15 +233,14 @@ class XarrayDataset3D(Dataset):
         input_end_idx = idx + (self.input_seq_len - 1) * self.interval_between_pred
         pred_start_idx = input_end_idx + self.interval_between_pred
         return (
-            self.data[
-                :, idx : (input_end_idx + 1) : self.interval_between_pred
-            ].time.values,
-            self.data[
-                :,
+            self._time_values[
+                idx : (input_end_idx + 1) : self.interval_between_pred
+            ],
+            self._time_values[
                 pred_start_idx : (
                     pred_start_idx + self.len_rest_after_first_pred_point + 1
                 ) : self.interval_between_pred,
-            ].time.values,
+            ],
         )
 
     def __getitem__(self, idx):
@@ -243,15 +250,15 @@ class XarrayDataset3D(Dataset):
         pred_start_idx = input_end_idx + self.interval_between_pred
         return (
             self._preprocess_data(
-                self.data[:, idx : (input_end_idx + 1) : self.interval_between_pred]
+                self._np_data[:, idx : (input_end_idx + 1) : self.interval_between_pred]
             ),
             self._preprocess_data(
-                self.data[
+                self._np_data[
                     :,
                     pred_start_idx : (
                         pred_start_idx + self.len_rest_after_first_pred_point + 1
                     ) : self.interval_between_pred,
                 ]
             ),
-            convert_datetime_to_int(self.data.time[idx].values),
+            convert_datetime_to_int(self._time_values[idx]),
         )
