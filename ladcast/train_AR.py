@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import resource
 import shutil
 from datetime import timedelta
 from pathlib import Path
@@ -1035,6 +1036,30 @@ def main(args):
         )  # (lat,)
         loss_lat_weight = loss_lat_weight.view(1, 1, 1, -1, 1)  # (1, 1, 1, lat, 1)
     symmetry_cfg = SymmetryConfig(**dict(getattr(general_config, "symmetry", {})))
+
+    def _get_rss_gb():
+        """Return (total_rss, anon_rss, file_rss) in GB from /proc/self/status.
+
+        Breakdown helps diagnose whether growth is from Python/PyTorch heap
+        allocations (RssAnon) or memory-mapped files like zarr (RssFile).
+        """
+        try:
+            vals = {}
+            with open("/proc/self/status") as f:
+                for line in f:
+                    for key in ("VmRSS", "RssAnon", "RssFile", "RssShmem"):
+                        if line.startswith(key + ":"):
+                            vals[key] = int(line.split()[1]) / 1024 / 1024  # KB→GB
+            return vals.get("VmRSS", 0), vals.get("RssAnon", 0), vals.get("RssFile", 0)
+        except Exception:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 / 1024
+            return rss, 0, 0
+
+    _mem_log_interval = 50  # log RSS every N steps
+    _gc_interval = 10  # gc.collect every N steps (was 200 — too infrequent)
+    _prev_rss, _, _ = _get_rss_gb()
+    logger.info(f"[mem] baseline RSS before training loop: {_prev_rss:.2f} GB")
+
     for epoch in range(first_epoch, general_config.num_train_epochs):
         ar_model.train()
         train_loss = 0.0
@@ -1043,6 +1068,7 @@ def main(args):
             with accelerator.accumulate(*_accumulate_models):
                 # initial_profile: (B, C, T, H, W), clean_images: (B, C, T, H, W), timestamps: (B,)
                 initial_profile, clean_images, timestamps = batch
+                del batch  # release DataLoader tuple so tensors have single owner
                 noise = torch.randn(clean_images.shape, device=clean_images.device)
                 bs = clean_images.shape[0]
 
@@ -1081,7 +1107,7 @@ def main(args):
                     )
                     # print(f"Process {accelerator.process_index}, step {step}, gathered_indices: {gathered_indices}")
                     accelerator.log(
-                        {"mean_noise_level": torch.mean(gathered_indices.float())},
+                        {"mean_noise_level": torch.mean(gathered_indices.float()).item()},
                         step=global_step,
                     )
                     timesteps = noise_scheduler.timesteps[indices].to(
@@ -1118,7 +1144,7 @@ def main(args):
                         noisy_images_for_model = apply_lon_roll_5d(noisy_images, applied_shifts)
                         x_in_for_model = apply_lon_roll_5d(x_in, applied_shifts)
                         accelerator.log(
-                            {"symmetry/mean_lon_shift": applied_shifts.float().mean()},
+                            {"symmetry/mean_lon_shift": applied_shifts.float().mean().item()},
                             step=global_step,
                         )
 
@@ -1280,6 +1306,30 @@ def main(args):
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
+                # ── Eagerly drop ALL references to large tensors ──
+                # Previous fix deleted only the "original" names, but alias
+                # variables (noisy_images_for_model, x_in_for_model, etc.)
+                # kept the same underlying tensors alive, preventing the
+                # autograd graph and saved activations from being freed.
+                _step_loss = loss.detach().item()  # save scalar before del
+
+                # 1. Core graph-connected tensors
+                del loss, model_pred, target, noise
+                # 2. Original input tensors AND their aliases (same objects
+                #    when symmetry is off; separate tensors when symmetry is on)
+                del noisy_images, x_in, initial_profile, clean_images
+                del noisy_images_for_model, x_in_for_model, initial_profile_for_model
+                # 3. Inner-loop scratch / small tensors
+                del tmp_x_in, weighting, applied_shifts
+                del timestamps, _terrain_kwargs
+                # 4. Conditionally-defined tensors
+                if general_config.do_edm_style_training:
+                    del sigmas, indices, gathered_indices
+                if terrain_encoder is not None:
+                    del terrain_feats, terrain_batch
+                else:
+                    del terrain_feats  # always defined (as None)
+
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if ema_config.use_ema:
@@ -1288,6 +1338,11 @@ def main(args):
                     ema_model.step(ar_model.parameters())
                     if ema_config.offload_ema:
                         ema_model.to(device="cpu", non_blocking=True)
+                        # Ensure the async D2H copy finishes so the CUDA-side
+                        # shadow copies can be freed immediately rather than
+                        # piling up behind pending stream events.
+                        if torch.cuda.is_available():
+                            torch.cuda.current_stream().synchronize()
                 progress_bar.update(1)
                 logs = {
                     "train loss": train_loss,
@@ -1346,8 +1401,23 @@ def main(args):
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
 
+            # --- Memory diagnostics & periodic GC ---
+            if step > 0 and step % _gc_interval == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            if step % _mem_log_interval == 0:
+                _cur_rss, _anon, _file = _get_rss_gb()
+                _delta = _cur_rss - _prev_rss
+                logger.info(
+                    f"[mem] epoch={epoch} step={step} global_step={global_step} "
+                    f"RSS={_cur_rss:.2f} GB (anon={_anon:.2f} file={_file:.2f})  "
+                    f"delta={_delta:+.2f} GB"
+                )
+                _prev_rss = _cur_rss
+
             logs = {
-                "step_loss": loss.detach().item(),
+                "step_loss": _step_loss,
                 "lr": lr_scheduler.get_last_lr()[0],
             }
             if ema_config.use_ema:
