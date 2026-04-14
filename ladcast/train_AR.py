@@ -1027,7 +1027,7 @@ def main(args):
     accelerator.wait_for_everyone()
     if args.lat_weighted_loss:
         # Derive latitude grid from actual data dimensions instead of hardcoding
-        _latent_H = train_dataloader.dataset._np_data.shape[2]  # H dimension
+        _latent_H = train_dataloader.dataset.latent_H
         loss_lat_weight = get_normalized_lat_weights_based_on_cos(
             np.linspace(-90, 90, _latent_H)
         )  # (lat,)
