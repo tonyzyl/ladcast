@@ -1,0 +1,10 @@
+imageio
+numpy
+scipy
+torch
+torchvision
+tqdm
+wandb
+transformers
+timm
+matplotlib

@@ -6,6 +6,7 @@ import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from typing import Optional
 
 import accelerate
 import numpy as np
@@ -28,6 +29,7 @@ from torch.optim import AdamW
 from tqdm.auto import tqdm
 
 from ladcast.dataloader.ar_dataloder import (
+    _normalize_zarr_dataset,
     convert_datetime_to_int,
     prepare_ar_dataloader,
 )
@@ -40,6 +42,13 @@ from ladcast.evaluate.utils import get_crps, get_normalized_lat_weights_based_on
 from ladcast.models.DCAE import AutoencoderDC
 from ladcast.models.embeddings import convert_int_to_datetime
 from ladcast.models.LaDCast_3D_model import LaDCastTransformer3DModel
+from ladcast.models.symmetry import (
+    SymmetryConfig,
+    apply_lon_roll_5d,
+    invert_lon_roll_5d,
+    sample_lon_roll_shifts,
+)
+from ladcast.models.terrain_encoder import TerrainEncoder
 from ladcast.models.utils import Karras_sigmas_lognormal
 from ladcast.pipelines.pipeline_AR import AutoRegressive2DPipeline
 from ladcast.pipelines.utils import ensemble_AR_sampler, get_sigmas
@@ -74,6 +83,7 @@ def log_validation(
     eval_ms: bool = True,
     eval_crps: bool = True,
     return_df: bool = False,
+    terrain_features: Optional[torch.Tensor] = None,
 ):
     """
     timestamp_list: list of timestamps @ t=0,
@@ -126,7 +136,15 @@ def log_validation(
     step_hour_list = [i * step_size_hour for i in range(1, total_num_steps + 1)]
 
     noise_scheduler = instantiate_from_config(noise_scheduler_config)
-    pipeline = AutoRegressive2DPipeline(ar_model, scheduler=noise_scheduler)
+    _val_model_kwargs = {}
+    if terrain_features is not None:
+        _val_model_kwargs["terrain_features"] = terrain_features
+    pipeline = AutoRegressive2DPipeline(
+        ar_model, scheduler=noise_scheduler, model_kwargs=_val_model_kwargs,
+    )
+    _val_sampler_kwargs = {}
+    if terrain_features is not None:
+        _val_sampler_kwargs["model_kwargs"] = _val_model_kwargs
 
     latitude = np.linspace(-88.5, 90, 120)  # crop south pole
     lat_weight = get_normalized_lat_weights_based_on_cos(latitude)  # (lat,)
@@ -199,14 +217,14 @@ def log_validation(
         edm_decoded_tensor = torch.full(
             (ensemble_size, 84, total_num_steps, 120, 240),
             float("nan"),
-            device=accelerator.device,
+            device="cpu",
         )
         if eval_ms:
             ms_known_latents = known_latents.clone()
             ms_decoded_tensor = torch.full(
                 (ensemble_size, 84, total_num_steps, 120, 240),
                 float("nan"),
-                device=accelerator.device,
+                device="cpu",
             )
         # rolling out the prediction
         for step in range(num_repetitions):
@@ -225,6 +243,7 @@ def log_validation(
                 timestamps=timestamps,
                 sampler_type="edm",
                 device=pipeline._execution_device,
+                sampler_kwargs=_val_sampler_kwargs,
             )
             # Update known_latents for the next prediction step
             # print('process', accelerator.process_index, 'finish edm_sample_latents')
@@ -240,6 +259,7 @@ def log_validation(
                     timestamps=timestamps,
                     sampler_type="pipeline",
                     device=pipeline._execution_device,
+                    sampler_kwargs=_val_sampler_kwargs,
                 )
                 ms_known_latents = ms_sample_latents[:, :, -input_seq_len:].clone()
 
@@ -260,7 +280,7 @@ def log_validation(
                     .to(accelerator.device),
                     full_field_mean_tensor,
                     full_field_std_tensor,
-                )
+                ).cpu()
 
                 if eval_ms:
                     ms_sample_latents[ensemble_idx] = latent_inv_transform_func(
@@ -276,39 +296,37 @@ def log_validation(
                         .to(accelerator.device),
                         full_field_mean_tensor,
                         full_field_std_tensor,
-                    )
+                    ).cpu()
 
+        ref_tensor_cpu = ref_tensor.cpu()
+        lat_weight_cpu = lat_weight.cpu()
         edm_single_squared_error = (
-            (edm_decoded_tensor - ref_tensor.unsqueeze(0)) ** 2
-        ) * lat_weight.view(1, 1, 1, -1, 1)  # (ensemble_size, C, T, H, W)
+            (edm_decoded_tensor - ref_tensor_cpu.unsqueeze(0)) ** 2
+        ) * lat_weight_cpu.view(1, 1, 1, -1, 1)  # (ensemble_size, C, T, H, W)
         edm_ens_squared_error = (
-            (edm_decoded_tensor.mean(dim=0) - ref_tensor) ** 2
-        ) * lat_weight.view(1, 1, -1, 1)  # (C, T, H, W)
-        edm_single_mse[timestamp_idx] = edm_single_squared_error.mean(dim=(0, 3, 4)).to(
-            "cpu"
-        )  # (C, T)
-        edm_ens_mse[timestamp_idx] = edm_ens_squared_error.mean(dim=(2, 3)).to(
-            "cpu"
-        )  # (C, T)
+            (edm_decoded_tensor.mean(dim=0) - ref_tensor_cpu) ** 2
+        ) * lat_weight_cpu.view(1, 1, -1, 1)  # (C, T, H, W)
+        edm_single_mse[timestamp_idx] = edm_single_squared_error.mean(dim=(0, 3, 4))  # (C, T)
+        edm_ens_mse[timestamp_idx] = edm_ens_squared_error.mean(dim=(2, 3))  # (C, T)
 
         if eval_ms:
             ms_single_squared_error = (
-                (ms_decoded_tensor - ref_tensor.unsqueeze(0)) ** 2
-            ) * lat_weight.view(1, 1, 1, -1, 1)
+                (ms_decoded_tensor - ref_tensor_cpu.unsqueeze(0)) ** 2
+            ) * lat_weight_cpu.view(1, 1, 1, -1, 1)
             ms_ens_squared_error = (
-                (ms_decoded_tensor.mean(dim=0) - ref_tensor) ** 2
-            ) * lat_weight.view(1, 1, -1, 1)
+                (ms_decoded_tensor.mean(dim=0) - ref_tensor_cpu) ** 2
+            ) * lat_weight_cpu.view(1, 1, -1, 1)
             ms_single_mse[timestamp_idx] = ms_single_squared_error.mean(
                 dim=(0, 3, 4)
-            ).to("cpu")
-            ms_ens_mse[timestamp_idx] = ms_ens_squared_error.mean(dim=(2, 3)).to("cpu")
+            )
+            ms_ens_mse[timestamp_idx] = ms_ens_squared_error.mean(dim=(2, 3))
 
         if eval_crps:
             tmp_edm_crps = get_crps(
-                edm_decoded_tensor, ref_tensor, ensemble_dim=0
+                edm_decoded_tensor, ref_tensor_cpu, ensemble_dim=0
             )  # (C, T, H, W)
             edm_crps[timestamp_idx] = (
-                (tmp_edm_crps * lat_weight.view(1, 1, -1, 1)).mean(dim=(2, 3)).to("cpu")
+                (tmp_edm_crps * lat_weight_cpu.view(1, 1, -1, 1)).mean(dim=(2, 3))
             )  # (C, T)
             crps_col_names = [
                 "lead time",
@@ -471,6 +489,42 @@ def parse_args():
         default="dcae",
         help="The Encoder-Decoder model backbone.",
     )  # dcae, vae
+    parser.add_argument(
+        "--use_terrain",
+        action="store_true",
+        default=False,
+        help="Enable GSNO terrain conditioning.",
+    )
+    parser.add_argument(
+        "--terrain_embed_dim",
+        type=int,
+        default=64,
+        help="Hidden dimension for TerrainEncoder GSNO blocks.",
+    )
+    parser.add_argument(
+        "--terrain_out_channels",
+        type=int,
+        default=32,
+        help="Number of output channels from TerrainEncoder (must match ar_model terrain_channels).",
+    )
+    parser.add_argument(
+        "--terrain_use_sht",
+        action="store_true",
+        default=False,
+        help="Use SHT backend (requires torch_harmonics) instead of FFT for TerrainEncoder.",
+    )
+    parser.add_argument(
+        "--lsm_path",
+        type=str,
+        default="ladcast/static/240x121_land_sea_mask.pt",
+        help="Path to land-sea mask tensor.",
+    )
+    parser.add_argument(
+        "--orography_path",
+        type=str,
+        default="ladcast/static/240x121_orography.pt",
+        help="Path to orography tensor.",
+    )
 
     return parser.parse_args()
 
@@ -505,6 +559,49 @@ def main(args):
         raise NotImplementedError(f"Unknown autoregressive model class: {args.ar_cls}")
     ar_model = ar_model_cls.from_config(config=ar_model_config)
     ar_model.requires_grad_(True)
+
+    # --- Terrain encoder (GSNO) ---
+    terrain_encoder = None
+    static_terrain_input = None
+    if args.use_terrain:
+        # Infer latent spatial resolution from data
+        _tmp_ds = xr.open_dataset(train_dataloader_config.ds_path, engine="zarr", chunks=None)
+        _tmp_ds = _normalize_zarr_dataset(_tmp_ds)
+        _latent_nlat = _tmp_ds.sizes.get("H", _tmp_ds.sizes.get("lat", 15))
+        _latent_nlon = _tmp_ds.sizes.get("W", _tmp_ds.sizes.get("lon", 30))
+        _tmp_ds.close()
+
+        terrain_encoder = TerrainEncoder(
+            in_channels=5,  # 1 LSM + 4 orography
+            embed_dim=args.terrain_embed_dim,
+            out_channels=args.terrain_out_channels,
+            phys_nlat=120,   # after south pole crop
+            phys_nlon=240,
+            latent_nlat=_latent_nlat,
+            latent_nlon=_latent_nlon,
+            use_sht=args.terrain_use_sht,
+        )
+        terrain_encoder.requires_grad_(True)
+
+        # Load static fields
+        lsm_tensor = torch.load(args.lsm_path, weights_only=True)         # (121, 240)
+        orography_tensor = torch.load(args.orography_path, weights_only=True)  # (4, 121, 240)
+        # Crop south pole (consistent with LaDCast convention)
+        lsm_tensor = lsm_tensor[1:, :]             # (120, 240)
+        orography_tensor = orography_tensor[:, 1:, :]  # (4, 120, 240)
+        # Concatenate and normalize
+        static_terrain_input = torch.cat(
+            [lsm_tensor.unsqueeze(0), orography_tensor], dim=0
+        )  # (5, 120, 240)
+        static_mean = static_terrain_input.mean(dim=(1, 2), keepdim=True)
+        static_std = static_terrain_input.std(dim=(1, 2), keepdim=True).clamp(min=1e-6)
+        static_terrain_input = (static_terrain_input - static_mean) / static_std
+        static_terrain_input = static_terrain_input.unsqueeze(0)  # (1, 5, 120, 240)
+        logger.info(
+            f"Terrain encoder enabled: embed_dim={args.terrain_embed_dim}, "
+            f"out_channels={args.terrain_out_channels}, "
+            f"params={sum(p.numel() for p in terrain_encoder.parameters()):,}"
+        )
 
     repo_name = args.hub_model_id
     if args.encdec_cls == "dcae":
@@ -628,6 +725,21 @@ def main(args):
         general_config.seed + accelerator.process_index
     )
 
+    # Safety check: xarray/zarr + num_workers > 0 causes deadlocks
+    _nw = train_dataloader_config.get("num_workers", 0)
+    _lim = train_dataloader_config.get("load_in_memory", False)
+    if _nw > 0 and not _lim:
+        logger.warning(
+            "⚠️  num_workers > 0 with xarray lazy loading (load_in_memory=False). "
+            "zarr file handles are NOT fork-safe and WILL deadlock after many iterations. "
+            "Set load_in_memory=true or num_workers=0 in your config."
+        )
+
+    # Sanitize DataLoader options: prefetch_factor requires num_workers > 0
+    if _nw == 0:
+        train_dataloader_config["prefetch_factor"] = None
+        train_dataloader_config["persistent_workers"] = False
+
     with accelerator.main_process_first():
         # https://github.com/huggingface/accelerate/issues/503
         # https://discuss.huggingface.co/t/shared-memory-in-accelerate/28619
@@ -641,14 +753,28 @@ def main(args):
     )
 
     val_dataset = xr.open_dataset(
-        train_dataloader_config.ds_path, engine="zarr", chunks="auto"
+        train_dataloader_config.ds_path, engine="zarr", chunks=None
     )
-    val_timerange = pd.date_range(start="2017-12-31", end="2019-01-10", freq="6h")
-    # val_timerange = pd.date_range(start='2018-12-31', end='2019-03-31', freq='6h') # allowing a 10-day window for covering the pred window
+    val_dataset = _normalize_zarr_dataset(val_dataset)
+    # Derive validation range from actual data: use last 10% of timestamps
+    _all_times = pd.DatetimeIndex(val_dataset.time.values)
+    _split_idx = int(len(_all_times) * 0.9)
+    _val_start = _all_times[_split_idx]
+    _val_end = _all_times[-1]
+    _freq = pd.infer_freq(_all_times[:100]) or "6h"
+    logger.info(f"Validation time range: {_val_start} → {_val_end}, freq={_freq}")
+    val_timerange = pd.date_range(start=_val_start, end=_val_end, freq=_freq)
+    # Keep only timestamps that actually exist in the dataset
+    val_timerange = val_timerange.intersection(_all_times)
     val_dataset = val_dataset.sel(time=val_timerange)
     val_timerange4pred = list(
-        filter_time_range(val_timerange, num_samples_per_month=2, enforce_year="2018")
+        filter_time_range(val_timerange, num_samples_per_month=2)
     )
+    if not val_timerange4pred:
+        # Fallback: just use a few evenly spaced timestamps
+        _step = max(1, len(val_timerange) // 10)
+        val_timerange4pred = [val_timerange[i] for i in range(0, len(val_timerange), _step)][:10]
+    logger.info(f"Validation prediction timestamps: {len(val_timerange4pred)} samples")
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -665,8 +791,12 @@ def main(args):
             * train_dataloader_config.batch_size
         )
 
+    # Combine parameters: ar_model + optional terrain_encoder
+    trainable_params = list(ar_model.parameters())
+    if terrain_encoder is not None:
+        trainable_params += list(terrain_encoder.parameters())
     optimizer = AdamW(
-        ar_model.parameters(), **OmegaConf.to_container(optimizer_config, resolve=True)
+        trainable_params, **OmegaConf.to_container(optimizer_config, resolve=True)
     )
 
     if "subbatch_steps" in general_config:
@@ -723,9 +853,20 @@ def main(args):
     # TODO: maybe only load vae when logging image
     encdec_model = encdec_model.to(accelerator.device)
 
-    ar_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        ar_model, optimizer, train_dataloader, lr_scheduler
-    )
+    # Move terrain data to device
+    if terrain_encoder is not None:
+        static_terrain_input = static_terrain_input.to(accelerator.device)
+
+    if terrain_encoder is not None:
+        ar_model, terrain_encoder, optimizer, train_dataloader, lr_scheduler = (
+            accelerator.prepare(
+                ar_model, terrain_encoder, optimizer, train_dataloader, lr_scheduler
+            )
+        )
+    else:
+        ar_model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            ar_model, optimizer, train_dataloader, lr_scheduler
+        )
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = (
@@ -863,15 +1004,24 @@ def main(args):
             accelerator.device
         )  # (lat,)
         loss_lat_weight = loss_lat_weight.view(1, 1, 1, -1, 1)  # (1, 1, 1, lat, 1)
+    symmetry_cfg = SymmetryConfig(**dict(getattr(general_config, "symmetry", {})))
     for epoch in range(first_epoch, general_config.num_train_epochs):
         ar_model.train()
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(ar_model):
+            _accumulate_models = [ar_model, terrain_encoder] if terrain_encoder is not None else [ar_model]
+            with accelerator.accumulate(*_accumulate_models):
                 # initial_profile: (B, C, T, H, W), clean_images: (B, C, T, H, W), timestamps: (B,)
                 initial_profile, clean_images, timestamps = batch
                 noise = torch.randn(clean_images.shape, device=clean_images.device)
                 bs = clean_images.shape[0]
+
+                # Compute terrain features (static input, but needs grad for terrain_encoder training)
+                terrain_feats = None
+                if terrain_encoder is not None:
+                    terrain_encoder.train()
+                    terrain_batch = static_terrain_input.expand(bs, -1, -1, -1)
+                    terrain_feats = terrain_encoder(terrain_batch)
 
                 # Sample a random timestep for each image
                 # diffusers/examples/dreambooth/train_dreambooth_lora_sdxl.py
@@ -909,6 +1059,7 @@ def main(args):
                     )
 
                 noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
+                x_in = noisy_images
 
                 if general_config.do_edm_style_training:
                     # sigmas: from high to low, default: 80 -> 0.002
@@ -922,6 +1073,24 @@ def main(args):
                     x_in = noise_scheduler.precondition_inputs(
                         noisy_images, sigmas
                     )  # scale_model_input designed for step
+                initial_profile_for_model = initial_profile
+                noisy_images_for_model = noisy_images
+                x_in_for_model = x_in
+                applied_shifts = None
+                if symmetry_cfg.enabled and symmetry_cfg.group == "lon_roll":
+                    if torch.rand(1, device=clean_images.device).item() < symmetry_cfg.prob:
+                        applied_shifts = sample_lon_roll_shifts(
+                            bs,
+                            symmetry_cfg.max_shift,
+                            device=clean_images.device,
+                        )
+                        initial_profile_for_model = apply_lon_roll_5d(initial_profile, applied_shifts)
+                        noisy_images_for_model = apply_lon_roll_5d(noisy_images, applied_shifts)
+                        x_in_for_model = apply_lon_roll_5d(x_in, applied_shifts)
+                        accelerator.log(
+                            {"symmetry/mean_lon_shift": applied_shifts.float().mean()},
+                            step=global_step,
+                        )
 
                 model_pred = torch.fill(torch.empty_like(clean_images), float("nan"))
                 for push_forward_step in range(args.num_push_forward_steps):
@@ -929,7 +1098,7 @@ def main(args):
                     end_idx = (
                         push_forward_step + 1
                     ) * num_slice_per_push_forward  # excluded
-                    tmp_x_in = x_in[:, :, start_idx:end_idx]
+                    tmp_x_in = x_in_for_model[:, :, start_idx:end_idx]
                     if push_forward_step >= 1:
                         # update, timestamps & initial_profile
                         for i in range(bs):
@@ -939,8 +1108,8 @@ def main(args):
                             )
                         if general_config.do_edm_style_training:
                             if "EDM" in noise_scheduler_config.target:
-                                initial_profile = noise_scheduler.precondition_outputs(
-                                    noisy_images[
+                                initial_profile_for_model = noise_scheduler.precondition_outputs(
+                                    noisy_images_for_model[
                                         :,
                                         :,
                                         start_idx
@@ -955,12 +1124,16 @@ def main(args):
                                     sigmas,
                                 )
 
+                    _terrain_kwargs = {}
+                    if terrain_feats is not None:
+                        _terrain_kwargs["terrain_features"] = terrain_feats
                     model_pred[:, :, start_idx:end_idx] = ar_model(
                         tmp_x_in,
                         timesteps,
-                        initial_profile,
+                        initial_profile_for_model,
                         time_elapsed=timestamps,
                         return_dict=False,
+                        **_terrain_kwargs,
                     )[0]
 
                 weighting = None
@@ -970,18 +1143,18 @@ def main(args):
                     # Follow: Section 5 of https://arxiv.org/abs/2206.00364.
                     if "EDM" in noise_scheduler_config.target:
                         model_pred = noise_scheduler.precondition_outputs(
-                            noisy_images, model_pred, sigmas
+                            noisy_images_for_model, model_pred, sigmas
                         )  # the last (or more) channel is the mask
                         weighting = (sigmas**2 + 0.5**2) / (
                             sigmas * 0.5
                         ) ** 2  # assume sigma_data=0.5 for now
                     else:
                         if noise_scheduler.config.prediction_type == "epsilon":
-                            model_pred = model_pred * (-sigmas) + noisy_images
+                            model_pred = model_pred * (-sigmas) + noisy_images_for_model
                         elif noise_scheduler.config.prediction_type == "v_prediction":
                             model_pred = model_pred * (
                                 -sigmas / (sigmas**2 + 1) ** 0.5
-                            ) + (noisy_images / (sigmas**2 + 1))
+                            ) + (noisy_images_for_model / (sigmas**2 + 1))
                     # (comment from diffuser) We are not doing weighting here because it tends result in numerical problems.
                     # See: https://github.com/huggingface/diffusers/pull/7126#issuecomment-1968523051
                     # There might be other alternatives for weighting as well:
@@ -992,6 +1165,8 @@ def main(args):
                     # loss = (weighting.float() * ((clean_images.float() - model_output.float()) ** 2)).mean()
                     # loss = ((clean_images.float() - model_output.float()) ** 2).mean()
                     # loss = loss_fn(model_output, clean_images, sigmas)
+                if applied_shifts is not None:
+                    model_pred = invert_lon_roll_5d(model_pred, applied_shifts)
 
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
@@ -1069,6 +1244,8 @@ def main(args):
 
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(ar_model.parameters(), 1.0)
+                    if terrain_encoder is not None:
+                        accelerator.clip_grad_norm_(terrain_encoder.parameters(), 1.0)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
@@ -1160,6 +1337,12 @@ def main(args):
                 val_timerange4pred
             ) as input_timestamp:
                 # print(f'process {accelerator.process_index} is processing {input_timestamp}')
+                # Pre-compute terrain features for validation
+                _val_terrain = None
+                if terrain_encoder is not None:
+                    terrain_encoder.eval()
+                    with torch.no_grad():
+                        _val_terrain = terrain_encoder(static_terrain_input)  # (1, C_t, 15, 30)
                 log_validation(
                     "val",
                     xr_dataset=val_dataset,
@@ -1178,6 +1361,7 @@ def main(args):
                     ensemble_size=10,
                     num_inference_steps=20,
                     eval_ms=False,
+                    terrain_features=_val_terrain,
                 )
             if accelerator.is_main_process:
                 if ema_config.use_ema:
