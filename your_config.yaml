@@ -1,0 +1,134 @@
+# =============================================================================
+# LaDCast AR Training Config (with GSNO Terrain Conditioning)
+# =============================================================================
+# Usage:
+#   python ladcast/train_AR.py \
+#       --config your_config.yaml \
+#       --ar_cls transformer \
+#       --use_terrain \
+#       --terrain_embed_dim 64 \
+#       --terrain_out_channels 32 \
+#       --gradient_checkpointing
+# =============================================================================
+
+# --- AR Model (LaDCastTransformer3DModel) ---
+ar_model:
+  in_channels: 8                # DC-AE latent channels (84 physical -> 32 latent)
+  out_channels: 8
+  num_attention_heads: 8
+  attention_head_dim: 64        # inner_dim = 24 * 128 = 3072
+  num_layers: 20                 # dual-stream blocks
+  num_single_layers: 40          # single-stream blocks
+  num_refiner_layers: 2          # context refiner layers
+  mlp_ratio: 4.0
+  patch_size: 1                  # spatial patch size
+  patch_size_t: 1                # temporal patch size
+  qk_norm: "rms_norm"
+  rope_theta: 256.0
+  rope_axes_dim: [16, 24, 24]   # (T, H, W) RoPE dimensions
+  rope_spatial_grid_start_pos: 0
+  rope_spatial_grid_end_pos: null
+  spatial_deg2rad: false
+  conditioning_tensor_in_channels: 8   # same as in_channels for AR conditioning
+  conditioning_tensor_rope_axes_dim: [16, 24, 24]
+  incl_time_elapsed: true        # include timestamp embeddings
+  nope: false
+  scale_attn_by_lat: false
+  terrain_channels: 8           # must match --terrain_out_channels
+
+# --- Noise Scheduler (EDM-style) ---
+noise_scheduler:
+  target: "diffusers.EDMDPMSolverMultistepScheduler"
+  params:
+    sigma_data: 0.5
+
+# --- Noise Sampler (Karras lognormal sigma sampling) ---
+noise_sampler:
+  P_mean_start: -1.2
+  P_std_start: 1.2
+  P_mean_end: -1.2
+  P_std_end: 1.2
+
+# --- Accelerator ---
+accelerator:
+  gradient_accumulation_steps: 1
+  mixed_precision: "bf16"        # "no", "fp16", or "bf16"
+  log_with: "wandb"             # or null for no tracking
+
+# --- Optimizer (AdamW) ---
+optimizer:
+  lr: 1.0e-4
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.01
+
+# --- LR Scheduler ---
+lr_scheduler:
+  name: "cosine"                 # "linear", "cosine", "cosine_with_restarts", "polynomial", "constant_with_warmup"
+  num_warmup_steps: 1000
+  num_cycles: 1
+  power: 1.0
+
+# --- Train Dataloader ---
+train_dataloader:
+  ds_path: "/home/limaocheng/ladcast/data/routeB_latent_train.zarr"   # <-- CHANGE THIS
+  start_date: "1979-01-01"
+  end_date: "2017-12-31"
+  var_name: "latent"
+  xr_engine: "zarr"
+  batch_size: 2                  # per-GPU batch size
+  input_seq_len: 1               # number of conditioning frames
+  return_seq_len: 1              # number of frames to predict
+  shuffle: true
+  num_workers: 0
+  sampling_interval: 1
+  interval_between_pred: 1
+  truncate_first: 0
+  data_augmentation: false
+  prefetch_factor: 2
+  persistent_workers: false
+  pin_memory: true
+  load_in_memory: false
+  transform: "normalize"         # or null
+
+# --- EMA ---
+ema:
+  use_ema: true
+  ema_max_decay: 0.9999
+  ema_update_after_step: 100
+  ema_inv_gamma: 1.0
+  ema_power: 0.6667
+  foreach: false
+  offload_ema: true
+
+# --- General ---
+general:
+  output_dir: "./output/ladcast_terrain"
+  logging_dir: "logs"
+  seed: 42
+  channel_names:
+    - "geopotential"
+    - "specific_humidity"
+    - "temperature"
+    - "u_component_of_wind"
+    - "v_component_of_wind"
+    - "10m_u_component_of_wind"
+    - "10m_v_component_of_wind"
+    - "2m_temperature"
+    - "mean_sea_level_pressure"
+    - "total_precipitation_6hr"
+  scale_lr: false
+  num_train_epochs: 100          # or set num_training_steps instead
+  num_training_steps: null       # set one of these two, the other will be computed
+  do_edm_style_training: true
+  snr_gamma: null                # null for EDM weighting
+  checkpointing_steps: 5000
+  save_model_epochs: 10
+  save_image_epochs: 5
+  tracker_project_name: "ladcast-terrain"
+  subbatch_steps: 1
+  symmetry:
+    enabled: false
+    group: "lon_roll"
+    prob: 0.0
+    max_shift: 0

@@ -1,0 +1,142 @@
+{
+  "settings": {
+    "latent_path": "/home/limaocheng/ladcast/data/routeB_latent_train.zarr",
+    "latent_norm_json": "/home/limaocheng/ladcast/static/ERA5_routeB_latent_normal_train.json",
+    "train_start_time": "2018-01-01T00",
+    "train_end_time": "2018-01-31T23",
+    "valid_start_time": "2018-02-01T00",
+    "valid_end_time": "2018-02-07T23",
+    "input_seq_len": 1,
+    "return_seq_len": 1,
+    "interval_between_pred": 1,
+    "batch_size": 8,
+    "max_steps": 500,
+    "num_inference_steps": 50,
+    "crps_samples": 8,
+    "seed": 42
+  },
+  "baselines": [
+    {
+      "model_name": "tiny_ar",
+      "train_metric_last": 1.385964274406433,
+      "valid_latent_mse": 1.505249696969986,
+      "seconds_total": 335.1343485909965,
+      "seconds_per_step": 0.670268697181993,
+      "param_count": 72,
+      "valid_crps": 0.9879527449607849,
+      "spread_var": 0.0,
+      "skill_mse": 0.9760506262755497,
+      "spread_skill_ratio": 0.0,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "non_symm_resnet",
+      "train_metric_last": 0.007300000172108412,
+      "valid_latent_mse": 0.01151964240707457,
+      "seconds_total": 339.8334827859944,
+      "seconds_per_step": 0.6796669655719888,
+      "param_count": 2071688,
+      "valid_crps": 0.08171853832900525,
+      "spread_var": 0.0,
+      "skill_mse": 0.0066779195066291,
+      "spread_skill_ratio": 0.0,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "routeB_diffusion_nonsymm",
+      "train_metric_last": 0.04171225428581238,
+      "valid_latent_mse": 1.209723436832428,
+      "seconds_total": 343.70808321599907,
+      "seconds_per_step": 0.6874161664319981,
+      "param_count": 2401672,
+      "valid_crps": 0.5354967468551227,
+      "spread_var": 0.35013797879219055,
+      "skill_mse": 0.9275577664375305,
+      "spread_skill_ratio": 0.6143970575838655,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "routeB_diffusion_aug",
+      "train_metric_last": 0.04157693684101105,
+      "valid_latent_mse": 0.1880658395588398,
+      "seconds_total": 284.4733387439992,
+      "seconds_per_step": 0.5689466774879984,
+      "param_count": 2401672,
+      "valid_crps": 0.14122984451907022,
+      "spread_var": 0.1272774189710617,
+      "skill_mse": 0.07912342995405197,
+      "spread_skill_ratio": 1.2683033138328066,
+      "inference_ablation": []
+    },
+    {
+      "model_name": "routeB_symdiff",
+      "train_metric_last": 0.03210102766752243,
+      "valid_latent_mse": 0.6436682760715484,
+      "seconds_total": 284.52052939200075,
+      "seconds_per_step": 0.5690410587840015,
+      "param_count": 2401672,
+      "valid_crps": 0.3263975924679211,
+      "spread_var": 0.2601131498813629,
+      "skill_mse": 0.4182374179363251,
+      "spread_skill_ratio": 0.7886234953069435,
+      "inference_ablation": [
+        {
+          "mode": "identity",
+          "valid_latent_mse": 0.6745218247175216
+        },
+        {
+          "mode": "random_single",
+          "valid_latent_mse": 0.6466274917125702
+        },
+        {
+          "mode": "fixed_group",
+          "valid_latent_mse": 0.6480214327573777
+        },
+        {
+          "mode": "group_mean_4",
+          "valid_latent_mse": 0.4548661127686501
+        },
+        {
+          "mode": "group_mean_8",
+          "valid_latent_mse": 0.4186276763677597
+        }
+      ]
+    },
+    {
+      "model_name": "routeB_symdiff_fourier_haar",
+      "train_metric_last": 0.03702249750494957,
+      "valid_latent_mse": 2.0454017996788023,
+      "seconds_total": 284.82867997099675,
+      "seconds_per_step": 0.5696573599419935,
+      "param_count": 2401672,
+      "valid_crps": 0.7629013721432005,
+      "spread_var": 0.49251261353492737,
+      "skill_mse": 1.6264724731445312,
+      "spread_skill_ratio": 0.5502820163705772,
+      "inference_ablation": [
+        {
+          "mode": "fourier_identity",
+          "valid_latent_mse": 2.1600368082523347
+        },
+        {
+          "mode": "fourier_random_single",
+          "valid_latent_mse": 2.064157873392105
+        },
+        {
+          "mode": "fourier_mean_4",
+          "valid_latent_mse": 1.6832840204238892
+        },
+        {
+          "mode": "fourier_mean_8",
+          "valid_latent_mse": 1.621965229511261
+        }
+      ]
+    }
+  ],
+  "result_table": "| model | train metric | valid MSE | CRPS | spread | skill MSE | S/S ratio | sec/step | params |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|\n| tiny_ar | 1.385964 | 1.505250 | 0.987953 | 0.000000 | 0.976051 | N/A | 0.6703 | 72 |\n| non_symm_resnet | 0.007300 | 0.011520 | 0.081719 | 0.000000 | 0.006678 | N/A | 0.6797 | 2071688 |\n| routeB_diffusion_nonsymm | 0.041712 | 1.209723 | 0.535497 | 0.350138 | 0.927558 | 0.614 | 0.6874 | 2401672 |\n| routeB_diffusion_aug | 0.041577 | 0.188066 | 0.141230 | 0.127277 | 0.079123 | 1.268 | 0.5689 | 2401672 |\n| routeB_symdiff | 0.032101 | 0.643668 | 0.326398 | 0.260113 | 0.418237 | 0.789 | 0.5690 | 2401672 |\n| routeB_symdiff_fourier_haar | 0.037022 | 2.045402 | 0.762901 | 0.492513 | 1.626472 | 0.550 | 0.5697 | 2401672 |",
+  "conclusion_a": "Diffusion does not beat the best supervised predictor; gap=0.632149 latent MSE",
+  "conclusion_b": "Symmetry-aware diffusion improves over non-symmetric diffusion by 0.566055 latent MSE",
+  "conclusion_c": "Fourier SymDiff does not improve over roll SymDiff; gap=1.401734 latent MSE",
+  "conclusion_d": "Data augmentation explains 180.5% of SymDiff gain (aug_gain=1.021658, symm_gain=0.566055)",
+  "conclusion_e": "Best CRPS model: routeB_diffusion_aug (CRPS=0.141230)"
+}
